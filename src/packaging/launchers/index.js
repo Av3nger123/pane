@@ -11,8 +11,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { electronBinary, electronDist } = require('./paths');
-const { installEntries, removeEntries, encodeRegFile } = require('./win-registry');
+const { electronBinary, electronDist } = require('../../core/paths');
+const { installEntries, removeEntries, encodeRegFile } = require('../../core/win-registry');
 
 function createLauncher({ manifest, appDir, runtimeRoot, home, outDir }) {
   fs.mkdirSync(outDir, { recursive: true });
@@ -259,7 +259,7 @@ function regImport(text) {
 
 function writeDefaultIcon(appDir) {
   const file = path.join(appDir, '.pane-icon.png');
-  fs.writeFileSync(file, require('./icon').defaultIconPng({ size: 256 }));
+  fs.writeFileSync(file, require('../../core/icon').defaultIconPng({ size: 256 }));
   return file;
 }
 

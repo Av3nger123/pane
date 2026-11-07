@@ -4,7 +4,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { isInside } = require('./safe-path');
+const { isInside } = require('../core/safe-path');
 
 const IGNORED = new Set(['node_modules', 'dist']);
 

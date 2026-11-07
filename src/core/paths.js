@@ -7,8 +7,8 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const RUNTIME_ROOT = path.resolve(__dirname, '..');
-const RUNTIME_VERSION = require('../package.json').version;
+const RUNTIME_ROOT = path.resolve(__dirname, '..', '..');
+const RUNTIME_VERSION = require('../../package.json').version;
 
 function paneHome() {
   if (process.env.PANE_HOME) return path.resolve(process.env.PANE_HOME);

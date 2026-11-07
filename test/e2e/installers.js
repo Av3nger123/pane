@@ -13,9 +13,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn, execFileSync, spawnSync } = require('child_process');
-const { RUNTIME_ROOT, RUNTIME_VERSION, electronBinary } = require('../lib/paths');
-const { serveDir } = require('./serve');
-const { waitForPage, connect, waitFor, randomPort, sleep } = require('./cdp');
+const { RUNTIME_ROOT, RUNTIME_VERSION, electronBinary } = require('../../src/core/paths');
+const { serveDir } = require('./lib/serve');
+const { waitForPage, connect, waitFor, randomPort, sleep } = require('./lib/cdp');
 
 const CLI = path.join(RUNTIME_ROOT, 'bin', 'pane.js');
 const MAC = process.platform === 'darwin';
@@ -94,7 +94,7 @@ async function main() {
     }
     if (server) server.close();
     if (MAC) spawnSync('hdiutil', ['detach', path.join(work, 'mnt'), '-force'], { stdio: 'ignore' });
-    fs.rmSync(work, { recursive: true, force: true });
+    fs.rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 }
 
@@ -160,7 +160,7 @@ async function checkWindows({ launchers, appHome, manifest, userEnv }) {
   const lnk = path.join(launchers, 'Field Notes.lnk');
   assert.ok(fs.existsSync(lnk), 'Start menu shortcut');
   assert.ok(fs.existsSync(path.join(appHome, '.pane-icon.ico')), 'app icon as .ico');
-  const { runWinHelper } = require('../lib/launcher');
+  const { runWinHelper } = require('../../src/packaging/launchers');
   const { shortcut } = runWinHelper(RUNTIME_ROOT, { read: lnk });
   assert.equal(shortcut.appUserModelId, `dev.pane.app.${manifest.id}`);
   assert.match(shortcut.target, /electron\.exe$/i);

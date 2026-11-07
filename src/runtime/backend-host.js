@@ -7,7 +7,7 @@ const Module = require('module');
 const path = require('path');
 const { pathToFileURL } = require('url');
 
-const sdkFile = path.join(process.env.PANE_SDK_DIR, 'pane', 'index.js');
+const sdkFile = path.join(process.env.PANE_SDK_DIR, 'index.js');
 const sdkUrl = pathToFileURL(sdkFile).href;
 
 if (typeof Module.registerHooks === 'function') {
@@ -19,8 +19,10 @@ if (typeof Module.registerHooks === 'function') {
   });
 } else {
   // Older Node: CommonJS only.
-  process.env.NODE_PATH = [process.env.PANE_SDK_DIR, process.env.NODE_PATH].filter(Boolean).join(path.delimiter);
-  Module._initPaths();
+  const resolve = Module._resolveFilename;
+  Module._resolveFilename = function paneResolve(request, ...rest) {
+    return request === 'pane' ? sdkFile : resolve.call(this, request, ...rest);
+  };
 }
 
 const pane = require(sdkFile);

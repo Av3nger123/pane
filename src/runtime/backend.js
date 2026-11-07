@@ -16,7 +16,7 @@ const { EventEmitter } = require('events');
 const { utilityProcess } = require('electron');
 
 const HOST = path.join(__dirname, 'backend-host.js');
-const SDK_DIR = path.join(__dirname, '..', 'backend-modules');
+const SDK_DIR = path.join(__dirname, '..', '..', 'sdk', 'backend');
 const MAX_LOG_BYTES = 5 * 1024 * 1024;
 const RECENT_LINES = 40;
 // Installed apps restart a crashed backend, but not forever.

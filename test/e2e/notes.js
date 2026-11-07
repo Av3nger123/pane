@@ -7,8 +7,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn, execFileSync } = require('child_process');
-const { RUNTIME_ROOT } = require('../lib/paths');
-const { sleep, waitFor, waitForPage, connect, randomPort } = require('./cdp');
+const { RUNTIME_ROOT } = require('../../src/core/paths');
+const { sleep, waitFor, waitForPage, connect, randomPort } = require('./lib/cdp');
 
 const APP = path.join(RUNTIME_ROOT, 'examples', 'notes');
 const CLI = path.join(RUNTIME_ROOT, 'bin', 'pane.js');
@@ -118,7 +118,7 @@ async function main() {
   execFileSync(process.execPath, [CLI, 'build', APP, '--out', out], { env, stdio: 'pipe' });
   const pkg = fs.readdirSync(out).find((f) => f.endsWith('.paneapp'));
   ok(`pane build packages Notes (${Math.round(fs.statSync(path.join(out, pkg)).size / 1024)} KB)`);
-  fs.rmSync(work, { recursive: true, force: true });
+  fs.rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   console.log('\nAll Notes checks passed.');
 }
 

@@ -4,9 +4,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { attachPayload, readPayload } = require('../lib/installer-payload');
-const { encodeIco, readIco } = require('../lib/ico');
-const { installEntries, removeEntries, encodeRegFile, regString } = require('../lib/win-registry');
+const { attachPayload, readPayload } = require('../../src/core/installer-payload');
+const { encodeIco, readIco } = require('../../src/core/ico');
+const { installEntries, removeEntries, encodeRegFile, regString } = require('../../src/core/win-registry');
 
 test('installer payload round-trips (what PaneSetup.cs reads)', () => {
   const stub = Buffer.from('MZ...pretend program...');

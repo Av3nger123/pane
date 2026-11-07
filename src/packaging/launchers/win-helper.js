@@ -8,7 +8,7 @@
 
 const fs = require('fs');
 const { app, nativeImage, shell } = require('electron');
-const { encodeIco } = require('./ico');
+const { encodeIco } = require('../../core/ico');
 
 const job = JSON.parse(fs.readFileSync(process.argv[process.argv.length - 1], 'utf8'));
 const ICON_SIZES = [16, 20, 24, 32, 40, 48, 64, 128, 256];

@@ -8,8 +8,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn, execFileSync } = require('child_process');
-const { electronBinary, RUNTIME_ROOT } = require('../lib/paths');
-const cdpHelpers = require('./cdp');
+const { electronBinary, RUNTIME_ROOT } = require('../../src/core/paths');
+const cdpHelpers = require('./lib/cdp');
 const { sleep, waitFor, connect } = cdpHelpers;
 
 const PORT = 9300 + Math.floor(Math.random() * 500);
@@ -158,7 +158,7 @@ async function main() {
   } finally {
     child.kill();
     await sleep(300);
-    fs.rmSync(work, { recursive: true, force: true });
+    fs.rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 }
 

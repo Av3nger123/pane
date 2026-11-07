@@ -8,8 +8,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn, execFileSync } = require('child_process');
-const { RUNTIME_ROOT } = require('../lib/paths');
-const { sleep, waitFor, waitForPage, connect } = require('./cdp');
+const { RUNTIME_ROOT } = require('../../src/core/paths');
+const { sleep, waitFor, waitForPage, connect } = require('./lib/cdp');
 
 const CLI = path.join(RUNTIME_ROOT, 'bin', 'pane.js');
 const only = process.argv[2];
@@ -28,7 +28,7 @@ async function main() {
     console.error('\nTemplate test FAILED:', err.stack || err.message);
     process.exitCode = 1;
   } finally {
-    fs.rmSync(work, { recursive: true, force: true });
+    fs.rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 }
 

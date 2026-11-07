@@ -7,18 +7,18 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { loadManifest } = require('./manifest');
-const { runCommand, projectEnv } = require('./run');
-const { satisfies, parse, compare } = require('./version');
-const { createLauncher, removeLauncher, fileName, makeIcns } = require('./launcher');
-const { attachPayload } = require('./installer-payload');
+const { loadManifest } = require('../core/manifest');
+const { runCommand, projectEnv } = require('../core/run');
+const { satisfies, parse, compare } = require('../core/version');
+const { createLauncher, removeLauncher, fileName, makeIcns } = require('./launchers');
+const { attachPayload } = require('../core/installer-payload');
 const {
   RUNTIME_ROOT, RUNTIME_VERSION, paneHome, appsDir, runtimesDir, binDir, launchersDir, electronBinary, electronPackageDir,
-} = require('./paths');
+} = require('../core/paths');
 
 const RECORD = '.pane-install.json';
 // What a runtime folder needs, besides Electron. Everything else stays behind.
-const RUNTIME_FILES = ['main.js', 'preload.js', 'package.json', 'lib', 'bin', 'backend-modules'];
+const RUNTIME_FILES = ['main.js', 'package.json', 'bin', 'src', 'sdk'];
 // Never copied when installing or packaging an app. `release` is where
 // `pane build` writes installers.
 const SKIP_IN_APP = new Set(['.git', 'release', '.DS_Store']);
@@ -195,7 +195,7 @@ function readRecord(dir) {
 // `pane pack-runtime` makes those files. The address comes from "pane.
 // distributionUrl" in Pane's package.json; PANE_DIST_URL overrides it.
 
-const PACKAGE = require('../package.json');
+const PACKAGE = require('../../package.json');
 
 function distributionUrl() {
   const url = (process.env.PANE_DIST_URL || (PACKAGE.pane && PACKAGE.pane.distributionUrl) || '').trim().replace(/\/+$/, '');
@@ -483,7 +483,7 @@ ${iconKey}</dict>
 // The compiled Windows installer: shipped in Pane releases, or built here on
 // Windows.
 function windowsStub() {
-  const { STUB, buildStub } = require('../installer/windows/build');
+  const { STUB, buildStub } = require('../../installer/windows/build');
   if (fs.existsSync(STUB)) return STUB;
   if (process.platform === 'win32') {
     try { return buildStub(); } catch { return null; }

@@ -9,8 +9,8 @@ const os = require('os');
 const path = require('path');
 const {
   checkShortcut, normalizeMenu, normalizeAppMenus, normalizeDialog, normalizeNotification,
-} = require('../lib/native-validate');
-const { createStore, createSecrets } = require('../lib/stores');
+} = require('../../src/core/validate');
+const { createStore, createSecrets } = require('../../src/core/stores');
 
 test('keyboard shortcuts', () => {
   for (const ok of ['CmdOrCtrl+N', 'CmdOrCtrl+Shift+E', 'Alt+F4', 'F5', 'Ctrl+Plus', 'CmdOrCtrl++', 'Shift+/', 'CmdOrCtrl+Backspace']) {
@@ -102,7 +102,7 @@ test('pane.secrets: stored encrypted, refused without a keychain', () => {
 });
 
 test('links and files the system opens the app with', () => {
-  const { checkProtocols, checkFileTypes, fromArgv } = require('../lib/open-requests');
+  const { checkProtocols, checkFileTypes, fromArgv } = require('../../src/core/open-requests');
   const errors = [];
   assert.deepEqual(checkProtocols(['notes', 'notes'], errors), ['notes']);
   checkProtocols(['https', 'Bad Name', 'pane-app'], errors);

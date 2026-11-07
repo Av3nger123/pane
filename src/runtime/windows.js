@@ -5,10 +5,10 @@
 const fs = require('fs');
 const path = require('path');
 const { app, BrowserWindow, nativeTheme, screen } = require('electron');
-const { resolveInside } = require('./safe-path');
+const { resolveInside } = require('../core/safe-path');
 const { SCHEME } = require('./protocol');
 
-const PRELOAD = path.join(__dirname, '..', 'preload.js');
+const PRELOAD = path.join(__dirname, 'preload.js');
 const MAC = process.platform === 'darwin';
 
 // Space the window controls take when the title bar is hidden. Apps read these

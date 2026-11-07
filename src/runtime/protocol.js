@@ -4,7 +4,7 @@
 const fs = require('fs');
 const { pathToFileURL } = require('url');
 const { protocol, net } = require('electron');
-const { resolveInside, isInside } = require('./safe-path');
+const { resolveInside, isInside } = require('../core/safe-path');
 
 const SCHEME = 'pane-app';
 

@@ -7,13 +7,13 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { satisfies, isValidSpec } = require('../lib/version');
-const { resolveInside } = require('../lib/safe-path');
-const { loadManifest, ManifestError } = require('../lib/manifest');
-const { appFiles, TEMPLATES } = require('../lib/templates');
-const { freePort, waitForUrl } = require('../lib/run');
-const { defaultIconPng } = require('../lib/icon');
-const { execName, fileName } = require('../lib/launcher');
+const { satisfies, isValidSpec } = require('../../src/core/version');
+const { resolveInside } = require('../../src/core/safe-path');
+const { loadManifest, ManifestError } = require('../../src/core/manifest');
+const { appFiles, TEMPLATES } = require('../../src/cli/templates');
+const { freePort, waitForUrl } = require('../../src/core/run');
+const { defaultIconPng } = require('../../src/core/icon');
+const { execName, fileName } = require('../../src/packaging/launchers');
 
 function tmpApp(files) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pane-test-'));
@@ -165,7 +165,7 @@ test('launcher names are safe', () => {
 });
 
 test('distribution address: https only (or a local test server)', () => {
-  const { distributionUrl } = require('../lib/install');
+  const { distributionUrl } = require('../../src/packaging/install');
   const saved = process.env.PANE_DIST_URL;
   try {
     process.env.PANE_DIST_URL = 'https://downloads.example.com/pane/';
@@ -180,8 +180,8 @@ test('distribution address: https only (or a local test server)', () => {
 });
 
 test('pane build writes installers that know the Pane version and address', { skip: process.platform === 'win32' }, async () => {
-  const { buildInstaller } = require('../lib/install');
-  const { RUNTIME_VERSION } = require('../lib/paths');
+  const { buildInstaller } = require('../../src/packaging/install');
+  const { RUNTIME_VERSION } = require('../../src/core/paths');
   const { execFileSync } = require('child_process');
   const dir = tmpApp(appFiles({ id: 'demo', name: "Demo's App", template: 'vanilla', backend: true }));
   fs.writeFileSync(path.join(dir, 'icon.png'), defaultIconPng({ size: 64 }));

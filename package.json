@@ -14,38 +14,37 @@
   "bin": {
     "pane": "bin/pane.js"
   },
-  "main": "backend-modules/pane/index.js",
+  "main": "sdk/backend/index.js",
   "types": "types/index.d.ts",
   "exports": {
     ".": {
       "types": "./types/index.d.ts",
-      "default": "./backend-modules/pane/index.js"
+      "default": "./sdk/backend/index.js"
     },
     "./package.json": "./package.json"
   },
   "files": [
     "main.js",
-    "preload.js",
     "bin",
-    "lib",
-    "backend-modules",
+    "src",
+    "sdk",
     "types",
-    "README.md",
-    "LICENSE",
+    "assets",
     "installer/windows/PaneSetup.cs",
     "installer/windows/build.js",
     "installer/windows/PaneSetup.exe",
-    "assets"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test test/*.test.js",
-    "smoke": "node test/smoke.js",
-    "test:templates": "node test/templates.js",
-    "test:notes": "node test/notes.js",
-    "test:installers": "node test/installers.js"
+    "test": "node --test test/unit/*.test.js",
+    "smoke": "node test/e2e/smoke.js",
+    "test:templates": "node test/e2e/templates.js",
+    "test:notes": "node test/e2e/notes.js",
+    "test:installers": "node test/e2e/installers.js"
   },
   "dependencies": {
     "electron": "45.2.3"

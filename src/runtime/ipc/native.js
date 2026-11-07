@@ -7,9 +7,9 @@
 const fs = require('fs');
 const path = require('path');
 const { BrowserWindow, Menu, Notification, dialog, ipcMain, safeStorage, shell } = require('electron');
-const { InputError, normalizeAppMenus, normalizeMenu, normalizeDialog, normalizeNotification } = require('./native-validate');
-const { createStore, createSecrets, StoreError } = require('./stores');
-const { convert } = require('./menu');
+const { InputError, normalizeAppMenus, normalizeMenu, normalizeDialog, normalizeNotification } = require('../../core/validate');
+const { createStore, createSecrets, StoreError } = require('../../core/stores');
+const { convert } = require('../menu');
 
 function wireNative({ manifest, windows, fromApp, userData, onAppMenus, dev }) {
   const testAnswers = dev ? readTestAnswers() : null;
