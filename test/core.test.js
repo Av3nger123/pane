@@ -189,12 +189,17 @@ test('pane build writes installers that know the Pane version and address', { sk
   process.env.PANE_DIST_URL = 'https://downloads.example.com/pane';
   try {
     const result = await buildInstaller(dir);
-    assert.deepEqual(result.warnings, []);
-    const sh = fs.readFileSync(result.installers[0], 'utf8');
+    assert.ok(!result.warnings.some((w) => /distribution address/.test(w)), result.warnings.join('\n'));
+    const shPath = result.installers.find((f) => f.endsWith('install.sh'));
+    const sh = fs.readFileSync(shPath, 'utf8');
     assert.ok(sh.includes(`PANE_VERSION='${RUNTIME_VERSION}'`));
     assert.ok(sh.includes('DIST_URL="${PANE_DIST_URL:-https://downloads.example.com/pane}"'));
     assert.ok(sh.includes("APP_NAME='Demo'\\''s App'"), 'quotes in the app name are escaped');
-    execFileSync('sh', ['-n', result.installers[0]]); // valid shell syntax
+    execFileSync('sh', ['-n', shPath]); // valid shell syntax
+    if (process.platform === 'darwin') {
+      const dmg = result.installers.find((f) => f.endsWith('.dmg'));
+      assert.ok(dmg && fs.statSync(dmg).size > 0, 'a .dmg on macOS');
+    }
     assert.ok(!fs.readdirSync(result.outDir).some((f) => f.startsWith('pane-runtime')), 'Pane itself is never bundled');
   } finally {
     if (saved === undefined) delete process.env.PANE_DIST_URL; else process.env.PANE_DIST_URL = saved;

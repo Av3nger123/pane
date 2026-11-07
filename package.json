@@ -31,7 +31,11 @@
     "backend-modules",
     "types",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "installer/windows/PaneSetup.cs",
+    "installer/windows/build.js",
+    "installer/windows/PaneSetup.exe",
+    "assets"
   ],
   "engines": {
     "node": ">=20"
@@ -40,7 +44,8 @@
     "test": "node --test test/*.test.js",
     "smoke": "node test/smoke.js",
     "test:templates": "node test/templates.js",
-    "test:notes": "node test/notes.js"
+    "test:notes": "node test/notes.js",
+    "test:installers": "node test/installers.js"
   },
   "dependencies": {
     "electron": "45.2.3"

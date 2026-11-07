@@ -263,11 +263,11 @@ function applyPermissions(ses, manifest, isAppUrl) {
   });
 }
 
-// Windows and Linux: tell the system that this app handles its protocols.
-// macOS launchers declare them in Info.plist instead. Dev runs never register,
-// so a half-built app does not take over links.
+// Linux: tell the system that this app handles its protocols. macOS
+// launchers declare them in Info.plist and Windows installs write them to the
+// registry. Dev runs never register, so a half-built app does not take over links.
 function registerProtocols(manifest) {
-  if (boot.dev || process.platform === 'darwin' || !manifest.protocols.length) return;
+  if (boot.dev || process.platform !== 'linux' || !manifest.protocols.length) return;
   for (const scheme of manifest.protocols) {
     try {
       app.setAsDefaultProtocolClient(scheme, process.execPath, [path.join(__dirname, 'main.js'), `--app=${manifest.dir}`]);
