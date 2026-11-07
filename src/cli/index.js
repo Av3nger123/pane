@@ -13,9 +13,9 @@ const { loadManifest } = require('../core/manifest');
 const { appFiles, TEMPLATES } = require('./templates');
 const { defaultIconPng } = require('../core/icon');
 const { startCommand, stopCommand, freePort, waitForUrl, projectEnv } = require('../core/run');
-const {
-  setupRuntime, installedRuntime, installApp, uninstallApp, listApps, buildInstaller, packRuntime, EXIT_NEEDS_NEWER_PANE,
-} = require('../packaging/install');
+const { setupRuntime, installedRuntime, packRuntime } = require('../packaging/runtime');
+const { installApp, uninstallApp, listApps, EXIT_NEEDS_NEWER_PANE } = require('../packaging/apps');
+const { buildInstaller } = require('../packaging/build');
 
 const PACKAGE_NAME = require('../../package.json').name;
 const EXIT_RESTART = 75;

@@ -165,7 +165,7 @@ test('launcher names are safe', () => {
 });
 
 test('distribution address: https only (or a local test server)', () => {
-  const { distributionUrl } = require('../../src/packaging/install');
+  const { distributionUrl } = require('../../src/packaging/runtime');
   const saved = process.env.PANE_DIST_URL;
   try {
     process.env.PANE_DIST_URL = 'https://downloads.example.com/pane/';
@@ -180,7 +180,7 @@ test('distribution address: https only (or a local test server)', () => {
 });
 
 test('pane build writes installers that know the Pane version and address', { skip: process.platform === 'win32' }, async () => {
-  const { buildInstaller } = require('../../src/packaging/install');
+  const { buildInstaller } = require('../../src/packaging/build');
   const { RUNTIME_VERSION } = require('../../src/core/paths');
   const { execFileSync } = require('child_process');
   const dir = tmpApp(appFiles({ id: 'demo', name: "Demo's App", template: 'vanilla', backend: true }));
