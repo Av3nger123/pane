@@ -7,6 +7,7 @@ const path = require('path');
 const { app, BrowserWindow, nativeTheme, screen } = require('electron');
 const { resolveInside } = require('../core/safe-path');
 const { SCHEME } = require('./protocol');
+const { CHANNELS } = require('./ipc/channels');
 
 const PRELOAD = path.join(__dirname, 'preload.js');
 const MAC = process.platform === 'darwin';
@@ -121,7 +122,7 @@ function createWindowManager(manifest, { dev, devUrl, isAppUrl }) {
     win.once('ready-to-show', () => show(win));
     setTimeout(() => show(win), 3000); // never leave a window invisible if the page is slow or broken
 
-    const pushSafeArea = () => win.webContents.send('pane:safe-area', safeArea(win));
+    const pushSafeArea = () => win.webContents.send(CHANNELS.SAFE_AREA, safeArea(win));
     win.on('enter-full-screen', pushSafeArea);
     win.on('leave-full-screen', pushSafeArea);
     if (stateKey) win.on('close', () => saveState(stateKey, win));

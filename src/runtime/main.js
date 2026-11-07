@@ -3,11 +3,12 @@
 // process, its own windows and its own Dock/taskbar identity, while all apps
 // share the same Chromium and Node installed with Pane.
 //
-// Started by `pane dev|run <folder>` (electron main.js --app=<folder> [--dev])
-// or by an installed app's launcher, which sets global.__paneBoot first.
+// Started through the root main.js by `pane dev|run <folder>`
+// (electron main.js --app=<folder> [--dev]) or by an installed app's launcher,
+// which sets global.__paneBoot first.
 
 const path = require('path');
-const { app, BrowserWindow, Menu, dialog, ipcMain, session, shell } = require('electron');
+const { app, dialog, session } = require('electron');
 
 // protocol.js does not read PANE_HOME, so it can load before readBoot().
 const { registerScheme, serveApp, makeIsAppUrl, isLocalDevUrl } = require('./protocol');
@@ -17,13 +18,14 @@ if (boot.home) process.env.PANE_HOME = boot.home; // before anything reads Pane'
 
 const { loadManifest } = require('../core/manifest');
 const { satisfies } = require('../core/version');
-const { RUNTIME_ROOT, RUNTIME_VERSION, dataDir } = require('../core/paths');
+const { RUNTIME_VERSION, dataDir } = require('../core/paths');
 const { Backend } = require('./backend');
 const { createWindowManager } = require('./windows');
-const { buildMenu } = require('./menu');
 const { watchForDev } = require('./dev');
-const { wireNative } = require('./ipc/native');
-const { asUrl, asFile, fromArgv } = require('../core/open-requests');
+const { wireIpc } = require('./ipc');
+const { CHANNELS, EVENTS } = require('./ipc/channels');
+const { lockDownContents, applyPermissions } = require('./security');
+const { setupOpenRequests, registerProtocols } = require('./open');
 
 // Exit code that tells `pane dev` to start the app again (pane.json changed).
 const EXIT_RESTART = 75;
@@ -68,7 +70,7 @@ function start() {
   registerScheme();
 
   // One running copy per app: opening it again focuses the existing window
-  // (and hands over any link or file it was opened with).
+  // (and hands over any link or file it was opened with, see open.js).
   if (!app.requestSingleInstanceLock()) { app.quit(); return; }
   if (boot.openOnly && boot.dev && manifest.dev && !boot.devUrl) {
     return fail(`${manifest.name} is not running`, `Start it first with: pane dev ${manifest.dir}`);
@@ -80,38 +82,10 @@ function start() {
     dataDir: path.join(userData, 'files'),
     logFile: boot.dev ? null : path.join(userData, 'logs', 'backend.log'),
   });
-  let windows = null;
   const isAppUrl = makeIsAppUrl(manifest, boot.devUrl);
+  let windows = null;
 
-  // Links and files for the app. They wait until a page calls pane.onOpen(),
-  // then go to that one window (never to every window, so nothing runs twice).
-  const openQueue = [];
-  let openReceiver = null;
-  const deliverOpen = (request) => {
-    if (!request) return;
-    if (openReceiver && !openReceiver.isDestroyed()) {
-      openReceiver.send('pane:event', { event: 'pane:open', data: request });
-      const win = BrowserWindow.fromWebContents(openReceiver);
-      if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
-    } else {
-      openQueue.push(request);
-      if (windows) windows.focusMain();
-    }
-  };
-  app.on('open-url', (e, url) => { e.preventDefault(); deliverOpen(asUrl(url, manifest)); });
-  app.on('open-file', (e, file) => { e.preventDefault(); deliverOpen(asFile(file, manifest)); });
-  for (const request of fromArgv(process.argv, manifest, process.cwd())) deliverOpen(request);
-  ipcMain.handle('pane:open-requests', (e) => {
-    if (!isAppUrl((e.senderFrame && e.senderFrame.url) || '')) return [];
-    openReceiver = e.sender;
-    return openQueue.splice(0);
-  });
-
-  app.on('second-instance', (_e, argv, workingDirectory) => {
-    const requests = fromArgv(argv, manifest, workingDirectory);
-    if (!requests.length && windows) windows.focusMain();
-    for (const request of requests) deliverOpen(request);
-  });
+  setupOpenRequests({ manifest, isAppUrl, getWindows: () => windows });
   app.on('window-all-closed', () => app.quit());
   app.on('will-quit', () => backend.stop());
   app.on('web-contents-created', (_e, contents) => lockDownContents(contents, isAppUrl));
@@ -122,30 +96,11 @@ function start() {
     applyPermissions(ses, manifest, isAppUrl);
 
     windows = createWindowManager(manifest, { dev: boot.dev, devUrl: boot.devUrl, isAppUrl });
-    const fromApp = (e) => isAppUrl((e.senderFrame && e.senderFrame.url) || '');
-    wireIpc(manifest, backend, windows, fromApp);
-
-    // App menus from pane.menu.set(); a click goes to the window it was used in.
-    let appMenus = [];
-    const onMenuClick = (id, win) => {
-      const target = (win && windows.get(win.id)) || null;
-      if (target) target.webContents.send('pane:event', { event: 'pane:menu', data: { id } });
-      else windows.broadcast('pane:event', { event: 'pane:menu', data: { id } });
-    };
-    const rebuildMenu = () => Menu.setApplicationMenu(buildMenu({ manifest, dev: boot.dev, windows, backend, appMenus, onClick: onMenuClick }));
-    wireNative({ manifest, windows, fromApp, userData, dev: boot.dev, onAppMenus: (menus) => { appMenus = menus; rebuildMenu(); } });
-    backend.on('emit', (payload) => windows.broadcast('pane:event', payload));
-    backend.on('exit', ({ code, log, willRestart }) => windows.broadcast('pane:event', {
-      event: 'pane:backend-exit',
-      data: { code, willRestart, log: boot.dev ? log : undefined },
-    }));
-    backend.on('restart', () => windows.broadcast('pane:event', { event: 'pane:backend-restart', data: null }));
-    if (boot.dev) backend.on('log', (entry) => windows.broadcast('pane:log', entry));
+    wireIpc({ manifest, backend, windows, isAppUrl, dev: boot.dev, userData });
+    forwardBackendEvents(backend, windows);
 
     if (process.platform === 'darwin' && boot.dev && manifest.icon) app.dock.setIcon(manifest.icon);
-    rebuildMenu();
-
-    registerProtocols(manifest);
+    registerProtocols(manifest, { dev: boot.dev });
     backend.start();
     windows.open({ main: true });
 
@@ -165,120 +120,15 @@ function start() {
   });
 }
 
-function wireIpc(manifest, backend, windows, fromApp) {
-  const deny = { ok: false, error: { message: 'Not allowed from this page.' } };
-
-  ipcMain.on('pane:info', (e) => {
-    const win = BrowserWindow.fromWebContents(e.sender);
-    e.returnValue = {
-      app: {
-        id: manifest.id, name: manifest.name, version: manifest.version,
-        dev: boot.dev, hasBackend: Boolean(manifest.backend), pane: RUNTIME_VERSION,
-      },
-      window: windows.describe(win),
-    };
-  });
-
-  ipcMain.handle('pane:call', async (e, method, args) => {
-    if (!fromApp(e)) return deny;
-    if (typeof method !== 'string' || !method) return { ok: false, error: { message: 'pane.call needs a function name.' } };
-    try {
-      return { ok: true, value: await backend.call(method, Array.isArray(args) ? args : []) };
-    } catch (err) {
-      return { ok: false, error: { message: err.message, stack: boot.dev ? err.backendStack : undefined } };
-    }
-  });
-
-  ipcMain.on('pane:send', (e, event, data) => {
-    if (fromApp(e) && typeof event === 'string' && event) backend.send(event, data);
-  });
-
-  ipcMain.handle('pane:window', (e, name, arg) => {
-    if (!fromApp(e)) return deny;
-    try {
-      return { ok: true, value: windows.action(BrowserWindow.fromWebContents(e.sender), name, arg) };
-    } catch (err) {
-      return { ok: false, error: { message: err.message } };
-    }
-  });
-
-  // Dev-only helpers used by the crash screen.
-  ipcMain.on('pane:dev', (e, action) => {
-    if (!boot.dev || !fromApp(e)) return;
-    if (action === 'restart-backend') backend.restart();
-  });
-
-  ipcMain.handle('pane:open-external', async (e, url) => {
-    if (!fromApp(e)) return deny;
-    if (!isExternalUrl(url)) return { ok: false, error: { message: 'Only http, https and mailto links can be opened.' } };
-    await shell.openExternal(url);
-    return { ok: true, value: true };
-  });
-}
-
-// Pages stay on the app's own origin. Web links open in the user's browser.
-function lockDownContents(contents, isAppUrl) {
-  contents.setWindowOpenHandler(({ url }) => {
-    if (isExternalUrl(url)) shell.openExternal(url);
-    return { action: 'deny' };
-  });
-  contents.on('will-navigate', (e, url) => {
-    if (isAppUrl(url)) return;
-    e.preventDefault();
-    if (isExternalUrl(url)) shell.openExternal(url);
-  });
-  contents.on('will-attach-webview', (e) => e.preventDefault());
-}
-
-// Only what pane.json asks for. macOS then asks the user for camera and
-// microphone in the app's own name.
-function applyPermissions(ses, manifest, isAppUrl) {
-  const allowed = new Set(manifest.permissions);
-  const decide = (permission, details = {}) => {
-    switch (permission) {
-      case 'fullscreen':
-      case 'clipboard-sanitized-write':
-        return true;
-      case 'notifications':
-        return allowed.has('notifications');
-      case 'clipboard-read':
-        return allowed.has('clipboard');
-      case 'geolocation':
-        return allowed.has('geolocation');
-      case 'media': {
-        const types = details.mediaTypes || [];
-        if (!types.length) return allowed.has('camera') || allowed.has('microphone');
-        return types.every((t) => (t === 'video' ? allowed.has('camera') : t === 'audio' ? allowed.has('microphone') : false));
-      }
-      default:
-        return false;
-    }
-  };
-  ses.setPermissionRequestHandler((_wc, permission, callback, details) => {
-    callback(isAppUrl(details.requestingUrl) && decide(permission, details));
-  });
-  ses.setPermissionCheckHandler((_wc, permission, requestingOrigin, details) => {
-    const from = requestingOrigin || (details && details.requestingUrl);
-    return isAppUrl(from) && decide(permission, details || {});
-  });
-}
-
-// Linux: tell the system that this app handles its protocols. macOS
-// launchers declare them in Info.plist and Windows installs write them to the
-// registry. Dev runs never register, so a half-built app does not take over links.
-function registerProtocols(manifest) {
-  if (boot.dev || process.platform !== 'linux' || !manifest.protocols.length) return;
-  for (const scheme of manifest.protocols) {
-    try {
-      app.setAsDefaultProtocolClient(scheme, process.execPath, [path.join(RUNTIME_ROOT, 'main.js'), `--app=${manifest.dir}`]);
-    } catch (err) {
-      console.error(`[pane] could not register ${scheme}:// (${err.message})`);
-    }
-  }
-}
-
-function isExternalUrl(url) {
-  return typeof url === 'string' && /^(https?:|mailto:)/i.test(url);
+// Backend events and lifecycle go to every window.
+function forwardBackendEvents(backend, windows) {
+  backend.on('emit', (payload) => windows.broadcast(CHANNELS.EVENT, payload));
+  backend.on('exit', ({ code, log, willRestart }) => windows.broadcast(CHANNELS.EVENT, {
+    event: EVENTS.BACKEND_EXIT,
+    data: { code, willRestart, log: boot.dev ? log : undefined },
+  }));
+  backend.on('restart', () => windows.broadcast(CHANNELS.EVENT, { event: EVENTS.BACKEND_RESTART, data: null }));
+  if (boot.dev) backend.on('log', (entry) => windows.broadcast(CHANNELS.LOG, entry));
 }
 
 start();
