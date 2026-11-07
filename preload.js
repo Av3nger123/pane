@@ -2,7 +2,7 @@
 // window.pane: the only bridge between an app's pages and Pane. Pages never
 // get Node or Electron themselves.
 
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 const info = ipcRenderer.sendSync('pane:info');
 const listeners = new Map();
@@ -93,6 +93,12 @@ if (info.app.dev) {
 const win = (name, arg) => ipcRenderer.invoke('pane:window', name, arg).then(unwrap);
 const invoke = (channel, ...args) => ipcRenderer.invoke(channel, ...args).then(unwrap);
 
+const openListeners = new Set();
+ipcRenderer.on('pane:event', (_e, { event, data }) => {
+  if (event !== 'pane:open') return;
+  for (const fn of openListeners) { try { fn(data); } catch (err) { console.error(err); } }
+});
+
 contextBridge.exposeInMainWorld('pane', {
   app: Object.freeze({ ...info.app }),
 
@@ -126,6 +132,10 @@ contextBridge.exposeInMainWorld('pane', {
 
   openExternal: (url) => ipcRenderer.invoke('pane:open-external', url).then(unwrap),
 
+  // The path of a File from drag and drop or <input type="file">, to pass to
+  // the backend. (Browsers hide file paths; Pane apps can ask for them.)
+  pathForFile: (file) => webUtils.getPathForFile(file),
+
   dialog: Object.freeze({
     // Paths the user picked ([] if cancelled). { title, defaultPath, buttonLabel, filters, multiple, directory }
     open: (options = {}) => invoke('pane:dialog', 'open', options),
@@ -150,6 +160,19 @@ contextBridge.exposeInMainWorld('pane', {
     // Shows a file or folder in Finder / Explorer.
     showItemInFolder: (fullPath) => invoke('pane:shell', 'showItemInFolder', fullPath),
   }),
+
+  // Links (pane.json "protocols") and files ("fileTypes") the system opened
+  // this app with: fn({ kind: 'url', url }) or fn({ kind: 'file', path }).
+  // The first call also receives anything that arrived before the page loaded.
+  // Treat URLs and file contents as untrusted input.
+  onOpen: (fn) => {
+    if (typeof fn !== 'function') throw new TypeError('pane.onOpen(function)');
+    openListeners.add(fn);
+    ipcRenderer.invoke('pane:open-requests').then((pending) => {
+      for (const request of pending || []) for (const l of openListeners) { try { l(request); } catch (err) { console.error(err); } }
+    });
+    return () => openListeners.delete(fn);
+  },
 
   // A system notification. Needs "notifications" in pane.json's permissions.
   // Clicks arrive as pane.on('pane:notification-click', ({ id }) => ...).

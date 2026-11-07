@@ -21,6 +21,17 @@ async function main() {
   delete env.ELECTRON_RUN_AS_NODE;
   execFileSync(process.execPath, [path.join(RUNTIME_ROOT, 'bin', 'pane.js'), 'create', appDir, '--name', 'Smoke App'], { env, stdio: 'pipe' });
 
+  // Links and files: the app declares a protocol and a file type.
+  const manifestFile = path.join(appDir, 'pane.json');
+  fs.writeFileSync(manifestFile, JSON.stringify({
+    ...JSON.parse(fs.readFileSync(manifestFile, 'utf8')),
+    protocols: ['smoke-test'],
+    fileTypes: [{ name: 'Smoke document', extensions: ['smoke'] }],
+  }, null, 2));
+  const sample = path.join(work, 'sample.smoke');
+  fs.writeFileSync(sample, 'hello');
+  const paneOpen = (target) => execFileSync(process.execPath, [path.join(RUNTIME_ROOT, 'bin', 'pane.js'), 'open', appDir, target, '--dev'], { env, stdio: 'pipe' });
+
   const child = spawn(electronBinary(), [path.join(RUNTIME_ROOT, 'main.js'), `--app=${appDir}`, '--dev', `--remote-debugging-port=${PORT}`], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   let output = '';
   child.stdout.on('data', (d) => { output += d; });
@@ -103,6 +114,27 @@ async function main() {
     assert.match(await run('pane.shell.showItemInFolder("relative/path").then(() => "ok", (e) => e.message)'), /absolute path/);
     assert.match(await run('pane.notify({ title: "Hi" }).then(() => "ok", (e) => e.message)'), /Add "notifications"/);
     ok('dialogs, Finder and notifications check their input and permissions');
+
+    paneOpen('smoke-test://first?from=queue');
+    await run('window.__opened = []; pane.onOpen((r) => window.__opened.push(r))');
+    await waitFor(async () => (await run('window.__opened.length')) === 1, 'the queued link');
+    paneOpen('smoke-test://second');
+    paneOpen(sample);
+    paneOpen('other-scheme://ignored');
+    await waitFor(async () => (await run('window.__opened.length')) === 3, 'the link and the file');
+    assert.deepEqual(await run('window.__opened'), [
+      { kind: 'url', url: 'smoke-test://first?from=queue' },
+      { kind: 'url', url: 'smoke-test://second' },
+      { kind: 'file', path: sample },
+    ]);
+    ok('links and files reach the running app (pane open), including ones sent before it listened');
+
+    await run('(() => { const i = document.createElement("input"); i.type = "file"; i.id = "pick"; document.body.append(i); })()');
+    const { root } = await cdp.send('DOM.getDocument', {});
+    const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector: '#pick' });
+    await cdp.send('DOM.setFileInputFiles', { nodeId, files: [sample] });
+    assert.equal(await run('pane.pathForFile(document.getElementById("pick").files[0])'), sample);
+    ok('pane.pathForFile gives the path of a dropped or picked file');
 
     const hashWin = await run('pane.window.open("about.html#details", { width: 440, height: 320 })');
     assert.equal(typeof hashWin, 'number');

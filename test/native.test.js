@@ -100,3 +100,29 @@ test('pane.secrets: stored encrypted, refused without a keychain', () => {
   secrets.set('token', 'x');
   assert.throws(() => broken.get('token'), /could not be decrypted/);
 });
+
+test('links and files the system opens the app with', () => {
+  const { checkProtocols, checkFileTypes, fromArgv } = require('../lib/open-requests');
+  const errors = [];
+  assert.deepEqual(checkProtocols(['notes', 'notes'], errors), ['notes']);
+  checkProtocols(['https', 'Bad Name', 'pane-app'], errors);
+  assert.equal(errors.length, 3);
+  const types = checkFileTypes([{ name: 'Markdown', extensions: ['.MD', 'markdown'] }], []);
+  assert.deepEqual([...types[0].extensions], ['md', 'markdown']);
+  assert.equal(types[0].role, 'editor');
+  const typeErrors = [];
+  checkFileTypes([{ name: 'x', extensions: ['../x'] }, { extensions: ['md'] }], typeErrors);
+  assert.equal(typeErrors.length, 2);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pane-open-'));
+  fs.writeFileSync(path.join(dir, 'a.md'), '# a');
+  fs.writeFileSync(path.join(dir, 'b.txt'), 'b');
+  const manifest = { protocols: ['notes'], fileTypes: types };
+  const argv = ['/electron', '/pane/main.js', '--app=/x', '--dev', 'notes://open/42', 'NOTES://Caps', 'other://x', 'a.md', 'b.txt', 'missing.md', '--flag'];
+  assert.deepEqual(fromArgv(argv, manifest, dir), [
+    { kind: 'url', url: 'notes://open/42' },
+    { kind: 'url', url: 'NOTES://Caps' },
+    { kind: 'file', path: path.join(dir, 'a.md') },
+  ]);
+  assert.deepEqual(fromArgv(argv, { protocols: [], fileTypes: [] }, dir), [], 'apps that declare nothing get nothing');
+});

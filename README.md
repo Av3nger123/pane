@@ -42,7 +42,7 @@ The **Develop** menu has Reload, Restart Backend and Developer Tools. To pass fl
 
 ### Example: Notes
 
-[`examples/notes`](examples/notes) is a real app on Pane, built with the React template. Notes are plain Markdown files in the app's data folder. It has search, autosave, a File menu with shortcuts, a context menu, a native confirmation before deleting, export through a save dialog, and any note in its own remembered window. Every window is kept in sync through backend events.
+[`examples/notes`](examples/notes) is a real app on Pane, built with the React template. Notes are plain Markdown files in the app's data folder. It has search, autosave, a File menu with shortcuts, a context menu, a native confirmation before deleting, export through a save dialog, `pane-notes://` links, opening and dropping `.md` files, and any note in its own remembered window. Every window is kept in sync through backend events.
 
 ```sh
 cd examples/notes && npm install && npm run dev
@@ -87,6 +87,8 @@ my-app/
 | `window.background` | Shown while pages load, and behind the window controls. One colour, or `{ "light": "#ffffff", "dark": "#1e1e1e" }`, which follows the system theme. |
 | `window.titleBar` | `"default"` is the normal title bar. `"hidden"` makes the window controls float over the page, so the app gets the whole window. |
 | `permissions` | `notifications`, `camera`, `microphone`, `clipboard`, `geolocation`. Anything not listed is refused. |
+| `protocols` | Optional. Links like `notes://...` open the app, for example `["notes"]`. |
+| `fileTypes` | Optional. Files the app can open ("Open with"), for example `[{ "name": "Markdown", "extensions": ["md"], "role": "editor" }]`. |
 | `dev` | Optional. `pane dev` runs `command` and loads `url`, which must be on `localhost`. `{port}` is a free port that Pane picks. Leave out `command` if you start the server yourself. |
 | `build` | Optional. `pane build` runs it first. |
 
@@ -127,7 +129,24 @@ await pane.store.set('theme', { dark: true });                         // small 
 await pane.secrets.set('token', 'abc');                                // encrypted with the system keychain
 ```
 
-Pages never get file access. A dialog returns paths, and the page passes them to the backend, which reads or writes the files.
+Pages never get file access. A dialog returns paths, and the page passes them to the backend, which reads or writes the files. For drag and drop or `<input type="file">`, `pane.pathForFile(file)` gives the path.
+
+### Links and files from the system
+
+Declare `protocols` and `fileTypes` in `pane.json`, then:
+
+```js
+pane.onOpen((request) => {
+  if (request.kind === 'url') openLink(new URL(request.url));   // notes://open/42
+  if (request.kind === 'file') pane.call('importFile', request.path);
+});
+```
+
+The first `onOpen` call also receives the link or file the app was launched with. Each request goes to one window. Treat URLs and file contents as untrusted input.
+
+- **macOS:** the app's launcher declares its protocols and file types, so links open the app and Finder offers it under "Open With".
+- **Windows and Linux:** installed apps register their protocols when they first run (not yet tested).
+- **During development:** `pane open <folder> <link-or-file> --dev` sends one to the copy running under `pane dev`.
 
 `pane.secrets` refuses to work where there is no real keychain, for example Linux without a keyring, rather than storing secrets in a form anyone could read.
 
@@ -212,7 +231,7 @@ The release workflow (`.github/workflows/release.yml`) creates the GitHub releas
 - **Apps** go to `.../Pane/apps/<id>`, and their data to `.../Pane/data/<id>`.
 - **On macOS**, the launcher is `~/Applications/Pane Apps/<App>.app`. It's a real app bundle with its own bundle id, name, icon and helper processes. Its 251 MB Chromium framework is an APFS clone of Pane's copy, so it takes about 1.4 MB of real disk.
 
-Other commands: `pane install <folder|.paneapp>`, `pane uninstall <id> [--purge]`, `pane list`, `pane setup`, `pane run`.
+Other commands: `pane install <folder|.paneapp>`, `pane uninstall <id> [--purge]`, `pane list`, `pane setup`, `pane run`, `pane open`. On macOS, uninstalling also removes the app's registration, so it stops being offered for its links and file types.
 
 Set `PANE_HOME` and `PANE_LAUNCHERS_DIR` to install somewhere else, for example while testing.
 

@@ -26,6 +26,20 @@ pane.expose({
     return note;
   },
   folder: () => notesDir,
+  // A Markdown or text file opened with Notes becomes a new note.
+  async importFile(file, from) {
+    if (typeof file !== 'string' || !/\.(md|markdown|txt)$/i.test(file)) throw new Error('Notes can open Markdown and text files.');
+    const text = await fs.readFile(file, 'utf8');
+    if (text.length > 5 * 1024 * 1024) throw new Error('That file is too large for a note.');
+    const note = await store.create(text);
+    changed('created', note.id, from);
+    return note;
+  },
+  async createWith(text, from) {
+    const note = await store.create(String(text || '').slice(0, 100000));
+    changed('created', note.id, from);
+    return note;
+  },
   // Writes a copy of a note to a path the user picked in a save dialog.
   async export(id, target) {
     if (typeof target !== 'string' || !path.isAbsolute(target)) throw new Error('Choose where to save the note.');

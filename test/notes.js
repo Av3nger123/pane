@@ -92,6 +92,15 @@ async function main() {
     await run('location.reload()').catch(() => {});
     await waitFor(() => run('document.querySelector(".item.selected .item-title")?.innerText === "Groceries"'), 'the last note to be selected again');
     ok('the last open note is selected again after a restart (pane.store)');
+
+    const paneOpen = (target) => execFileSync(process.execPath, [CLI, 'open', APP, target, '--dev'], { env, stdio: 'pipe' });
+    paneOpen('pane-notes://new?text=From%20a%20link%0Asent%20by%20another%20app');
+    await waitFor(() => run('document.querySelector(".item.selected .item-title")?.innerText === "From a link"'), 'the note from the link');
+    const doc = path.join(work, 'Imported.md');
+    fs.writeFileSync(doc, '# Imported plan\nfrom a file on disk');
+    paneOpen(doc);
+    await waitFor(() => run('document.querySelector(".item.selected .item-title")?.innerText === "Imported plan"'), 'the imported file');
+    ok('a pane-notes:// link and an opened .md file each become a note');
     single.close();
     main.close();
   } catch (err) {

@@ -140,6 +140,14 @@ declare global {
     readonly window: PaneWindowApi;
     /** Opens an http(s) or mailto link in the user's browser or mail app. */
     openExternal(url: string): Promise<boolean>;
+    /**
+     * Links (pane.json "protocols") and files ("fileTypes") the system opened this app with.
+     * The first call also receives anything that arrived before the page loaded.
+     * Treat URLs and file contents as untrusted input. Returns a function that stops listening.
+     */
+    onOpen(listener: (request: { kind: 'url'; url: string } | { kind: 'file'; path: string }) => void): () => void;
+    /** The path of a File from drag and drop or <input type="file">, to pass to the backend. */
+    pathForFile(file: File): string;
     readonly dialog: PaneDialogApi;
     readonly menu: PaneMenuApi;
     readonly shell: { showItemInFolder(fullPath: string): Promise<boolean> };

@@ -60,6 +60,31 @@ function Library() {
   useEffect(() => pane.on('notes:changed', refresh), [refresh]);
   useEffect(() => { if (selected) pane.store.set('lastNote', selected); }, [selected]);
 
+  // Links (pane-notes://new?text=..., pane-notes://open/<id>) and .md files
+  // opened with Notes.
+  useEffect(() => pane.onOpen(async (request) => {
+    try {
+      if (request.kind === 'file') {
+        const note = await pane.call('importFile', request.path, ME);
+        setQuery('');
+        setSelected(note.id);
+        return;
+      }
+      const url = new URL(request.url);
+      const [action, id] = [url.hostname, url.pathname.replace(/^\//, '')];
+      if (action === 'new') {
+        const note = await pane.call('createWith', url.searchParams.get('text') || '', ME);
+        setQuery('');
+        setSelected(note.id);
+      } else if (action === 'open' && /^[a-z0-9]+$/.test(id)) {
+        setQuery('');
+        setSelected(id);
+      }
+    } catch (err) {
+      pane.dialog.message({ type: 'warning', message: 'Notes could not open that.', detail: err.message });
+    }
+  }), []);
+
   const create = useCallback(async () => {
     setQuery('');
     const note = await pane.call('create', ME);
@@ -89,8 +114,26 @@ function Library() {
     if (choice === 'delete') removeNote(note.id, note.title);
   }
 
+  // Drop .md files on the window to import them as notes.
+  const [dropping, setDropping] = useState(false);
+  async function drop(e) {
+    e.preventDefault();
+    setDropping(false);
+    for (const file of e.dataTransfer.files) {
+      if (!/\.(md|markdown|txt)$/i.test(file.name)) continue;
+      const note = await pane.call('importFile', pane.pathForFile(file), ME);
+      setQuery('');
+      setSelected(note.id);
+    }
+  }
+
   return (
-    <div className="library">
+    <div
+      className={dropping ? 'library dropping' : 'library'}
+      onDragOver={(e) => { e.preventDefault(); setDropping(true); }}
+      onDragLeave={(e) => { if (e.currentTarget === e.target) setDropping(false); }}
+      onDrop={drop}
+    >
       <aside className="sidebar">
         <div className="drag sidebar-top" />
         <div className="sidebar-tools">
