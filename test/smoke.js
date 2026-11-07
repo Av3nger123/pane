@@ -82,6 +82,28 @@ async function main() {
     assert.ok(nav.startsWith('pane-app://smoke-app/'), `navigation stayed in the app: ${nav}`);
     ok('navigating away from the app is refused');
 
+    await run('pane.store.set("prefs", { wrap: true, size: 15 })');
+    await run('location.reload()').catch(() => {});
+    await waitFor(() => run('document.readyState === "complete" && typeof pane === "object"'), 'the page after reload');
+    assert.deepEqual(await run('pane.store.get("prefs")'), { wrap: true, size: 15 });
+    assert.match(await run('pane.store.set("bad key!", 1).then(() => "ok", (e) => e.message)'), /not a valid key/);
+    ok('pane.store keeps JSON values across reloads');
+
+    assert.equal(await run('pane.menu.set([{ label: "File", items: [{ label: "New Note", id: "new", shortcut: "CmdOrCtrl+N" }] }, { label: "Note", items: [{ label: "Export", id: "export" }] }])'), true);
+    assert.match(await run('pane.menu.set([{ label: "File", items: [{ label: "No id" }] }]).then(() => "ok", (e) => e.message)'), /needs an "id"/);
+    ok('pane.menu.set accepts app menus and explains bad ones');
+
+    const first = await run('pane.window.open("about.html", { key: "about", width: 440, height: 320 })');
+    const again = await run('pane.window.open("about.html", { key: "about" })');
+    assert.equal(first, again, 'the same key focuses the open window');
+    assert.match(await run('pane.window.open("about.html", { key: "no spaces allowed" }).then(() => "ok", (e) => e.message)'), /key/);
+    ok('windows with a key are not opened twice');
+
+    assert.match(await run('pane.dialog.message({}).then(() => "ok", (e) => e.message)'), /needs a "message"/);
+    assert.match(await run('pane.shell.showItemInFolder("relative/path").then(() => "ok", (e) => e.message)'), /absolute path/);
+    assert.match(await run('pane.notify({ title: "Hi" }).then(() => "ok", (e) => e.message)'), /Add "notifications"/);
+    ok('dialogs, Finder and notifications check their input and permissions');
+
     const hashWin = await run('pane.window.open("about.html#details", { width: 440, height: 320 })');
     assert.equal(typeof hashWin, 'number');
     await waitForPage('about.html#details');

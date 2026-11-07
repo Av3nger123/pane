@@ -22,6 +22,7 @@ const { Backend } = require('./lib/backend');
 const { createWindowManager } = require('./lib/windows');
 const { buildMenu } = require('./lib/menu');
 const { watchForDev } = require('./lib/dev');
+const { wireNative } = require('./lib/native');
 
 // Exit code that tells `pane dev` to start the app again (pane.json changed).
 const EXIT_RESTART = 75;
@@ -87,7 +88,18 @@ function start() {
     applyPermissions(ses, manifest, isAppUrl);
 
     windows = createWindowManager(manifest, { dev: boot.dev, devUrl: boot.devUrl, isAppUrl });
-    wireIpc(manifest, backend, windows, isAppUrl);
+    const fromApp = (e) => isAppUrl((e.senderFrame && e.senderFrame.url) || '');
+    wireIpc(manifest, backend, windows, fromApp);
+
+    // App menus from pane.menu.set(); a click goes to the window it was used in.
+    let appMenus = [];
+    const onMenuClick = (id, win) => {
+      const target = (win && windows.get(win.id)) || null;
+      if (target) target.webContents.send('pane:event', { event: 'pane:menu', data: { id } });
+      else windows.broadcast('pane:event', { event: 'pane:menu', data: { id } });
+    };
+    const rebuildMenu = () => Menu.setApplicationMenu(buildMenu({ manifest, dev: boot.dev, windows, backend, appMenus, onClick: onMenuClick }));
+    wireNative({ manifest, windows, fromApp, userData, dev: boot.dev, onAppMenus: (menus) => { appMenus = menus; rebuildMenu(); } });
     backend.on('emit', (payload) => windows.broadcast('pane:event', payload));
     backend.on('exit', ({ code, log, willRestart }) => windows.broadcast('pane:event', {
       event: 'pane:backend-exit',
@@ -97,7 +109,7 @@ function start() {
     if (boot.dev) backend.on('log', (entry) => windows.broadcast('pane:log', entry));
 
     if (process.platform === 'darwin' && boot.dev && manifest.icon) app.dock.setIcon(manifest.icon);
-    Menu.setApplicationMenu(buildMenu({ manifest, dev: boot.dev, windows, backend }));
+    rebuildMenu();
 
     backend.start();
     windows.open({ main: true });
@@ -118,8 +130,7 @@ function start() {
   });
 }
 
-function wireIpc(manifest, backend, windows, isAppUrl) {
-  const fromApp = (e) => isAppUrl((e.senderFrame && e.senderFrame.url) || '');
+function wireIpc(manifest, backend, windows, fromApp) {
   const deny = { ok: false, error: { message: 'Not allowed from this page.' } };
 
   ipcMain.on('pane:info', (e) => {

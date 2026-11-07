@@ -15,7 +15,7 @@ const CLI = path.join(RUNTIME_ROOT, 'bin', 'pane.js');
 
 async function main() {
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'pane-notes-'));
-  const env = { ...process.env, PANE_HOME: path.join(work, 'home') };
+  const env = { ...process.env, PANE_HOME: path.join(work, 'home'), PANE_TEST_DIALOGS: JSON.stringify({ message: 0 }) };
   delete env.ELECTRON_RUN_AS_NODE;
   const notesDir = path.join(env.PANE_HOME, 'data', 'notes.dev', 'files', 'notes');
 
@@ -35,7 +35,6 @@ async function main() {
     const main = await connect((await waitForPage(port, (t) => /^http:\/\/localhost:\d+\/(index\.html)?$/.test(t.url), 'the Notes window')).webSocketDebuggerUrl);
     const run = main.run;
     await waitFor(() => run('Boolean(document.querySelector(".sidebar"))'), 'the app to render');
-    await run('window.confirm = () => true'); // accept "Delete?" automatically
     await waitFor(() => run('/No notes yet/.test(document.querySelector(".list-empty")?.innerText || "")'), 'the empty state');
     ok('starts empty, with an invitation to write');
 
@@ -73,17 +72,26 @@ async function main() {
     await run('[...document.querySelectorAll("button")].find((b) => b.innerText === "Open in new window").click()');
     const single = await connect((await waitForPage(port, (t) => t.url.includes('#note='), 'the note window')).webSocketDebuggerUrl);
     await waitFor(() => single.run('document.querySelector("textarea")?.value.startsWith("Trip plan")'), 'the note in its window');
-    await single.run('window.confirm = () => true');
     await single.run('(() => { const t = document.querySelector("textarea"); t.focus(); t.setSelectionRange(t.value.length, t.value.length); })()');
     await single.send('Input.insertText', { text: ' at 9:40' });
     await waitFor(() => run('document.querySelector("textarea").value === "Trip plan\\nbook the train at 9:40"'), 'the main window to pick up the edit');
     ok('a note opens in its own window, and edits there appear in the main window');
 
+    await run('[...document.querySelectorAll("button")].find((b) => b.innerText === "Open in new window").click()');
+    await sleep(800);
+    const noteWindows = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).filter((t) => t.type === 'page' && t.url.includes('#note='));
+    assert.equal(noteWindows.length, 1, 'opening the same note again reuses its window');
+    ok('opening a note that already has a window focuses that window');
+
     await run('[...document.querySelectorAll("button")].find((b) => b.innerText === "Delete").click()');
     await waitFor(() => single.run('/This note was deleted/.test(document.body.innerText)'), 'the note window to notice');
     await waitFor(() => run('document.querySelectorAll(".item").length === 1'), 'the list to drop the note');
     assert.equal(fs.readdirSync(path.join(notesDir, '.trash')).length, 1);
-    ok('deleting moves the note to the trash, and its other window says so');
+    ok('deleting (confirmed in the native dialog) moves the note to the trash, and its other window says so');
+
+    await run('location.reload()').catch(() => {});
+    await waitFor(() => run('document.querySelector(".item.selected .item-title")?.innerText === "Groceries"'), 'the last note to be selected again');
+    ok('the last open note is selected again after a restart (pane.store)');
     single.close();
     main.close();
   } catch (err) {

@@ -28,6 +28,62 @@ declare global {
     'pane:backend-exit': { code: number; willRestart: boolean; log?: string[] };
     /** The backend was started again. */
     'pane:backend-restart': null;
+    /** An app menu item (pane.menu.set) was clicked in this window. */
+    'pane:menu': { id: string };
+    /** A notification from pane.notify was clicked. */
+    'pane:notification-click': { id: string | null };
+  }
+
+  interface PaneMenuItem {
+    label?: string;
+    /** Reported in 'pane:menu' events and returned by pane.menu.popup. Required unless the item has `items`. */
+    id?: string;
+    /** e.g. "CmdOrCtrl+N", "CmdOrCtrl+Shift+E", "F5" */
+    shortcut?: string;
+    enabled?: boolean;
+    /** Makes it a checkbox item. */
+    checked?: boolean;
+    items?: PaneMenuItem[];
+    type?: 'separator';
+  }
+
+  interface PaneFileFilter {
+    name: string;
+    extensions: string[];
+  }
+
+  interface PaneDialogApi {
+    /** The paths the user picked, or [] if cancelled. */
+    open(options?: { title?: string; defaultPath?: string; buttonLabel?: string; filters?: PaneFileFilter[]; multiple?: boolean; directory?: boolean; showHidden?: boolean }): Promise<string[]>;
+    /** The path to save to, or null if cancelled. Pages cannot write files: pass the path to the backend. */
+    save(options?: { title?: string; defaultPath?: string; buttonLabel?: string; filters?: PaneFileFilter[] }): Promise<string | null>;
+    /** The index of the button pressed. */
+    message(options: { message: string; detail?: string; type?: 'none' | 'info' | 'warning' | 'error' | 'question'; buttons?: string[]; defaultId?: number; cancelId?: number; title?: string }): Promise<number>;
+    /** true if the user pressed the OK button. */
+    confirm(message: string, options?: { detail?: string; okLabel?: string; cancelLabel?: string; type?: 'none' | 'info' | 'warning' | 'error' | 'question' }): Promise<boolean>;
+  }
+
+  interface PaneMenuApi {
+    /** Sets the app's menus. Items in "File", "Edit", "View", "Window" or "Help" merge into Pane's standard menus. */
+    set(menus: Array<{ label: string; items: PaneMenuItem[] }>): Promise<boolean>;
+    /** Shows a context menu at the pointer (or at x, y). Resolves to the clicked item's id, or null. */
+    popup(items: PaneMenuItem[], at?: { x?: number; y?: number }): Promise<string | null>;
+  }
+
+  type PaneJson = string | number | boolean | null | PaneJson[] | { [key: string]: PaneJson };
+
+  interface PaneStoreApi {
+    get<T extends PaneJson = PaneJson>(key: string): Promise<T | undefined>;
+    set(key: string, value: PaneJson): Promise<boolean>;
+    delete(key: string): Promise<boolean>;
+    all(): Promise<Record<string, PaneJson>>;
+  }
+
+  interface PaneSecretsApi {
+    /** null if there is no secret with this key. */
+    get(key: string): Promise<string | null>;
+    set(key: string, value: string): Promise<boolean>;
+    delete(key: string): Promise<boolean>;
   }
 
   interface PaneAppInfo {
@@ -45,6 +101,8 @@ declare global {
     width?: number;
     height?: number;
     title?: string;
+    /** Windows with a key remember their size and position; opening the same key again focuses the open window. */
+    key?: string;
   }
 
   interface PaneWindowApi {
@@ -82,6 +140,15 @@ declare global {
     readonly window: PaneWindowApi;
     /** Opens an http(s) or mailto link in the user's browser or mail app. */
     openExternal(url: string): Promise<boolean>;
+    readonly dialog: PaneDialogApi;
+    readonly menu: PaneMenuApi;
+    readonly shell: { showItemInFolder(fullPath: string): Promise<boolean> };
+    /** A system notification. Needs "notifications" in pane.json's permissions. Returns false where unsupported. */
+    notify(options: { title: string; body?: string; silent?: boolean; id?: string }): Promise<boolean>;
+    /** Small JSON settings kept by Pane for this app (up to 1 MB). */
+    readonly store: PaneStoreApi;
+    /** Text encrypted with the system keychain. */
+    readonly secrets: PaneSecretsApi;
   }
 
   interface Window {

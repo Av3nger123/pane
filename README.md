@@ -42,7 +42,7 @@ The **Develop** menu has Reload, Restart Backend and Developer Tools. To pass fl
 
 ### Example: Notes
 
-[`examples/notes`](examples/notes) is a real app on Pane, built with the React template. Notes are plain Markdown files in the app's data folder. It has search, autosave, deleted notes kept in a trash folder, and any note in its own window, with every window kept in sync through backend events.
+[`examples/notes`](examples/notes) is a real app on Pane, built with the React template. Notes are plain Markdown files in the app's data folder. It has search, autosave, a File menu with shortcuts, a context menu, a native confirmation before deleting, export through a save dialog, and any note in its own remembered window. Every window is kept in sync through backend events.
 
 ```sh
 cd examples/notes && npm install && npm run dev
@@ -84,6 +84,7 @@ my-app/
 | `pane` | Pane versions the app works with: `">=0.1.0"`, `"^1.2.0"`. |
 | `ui`, `start` | The folder Pane serves, and the first page in it. |
 | `backend` | Optional. A Node file (CommonJS or ES module) that runs in its own process. |
+| `window.background` | Shown while pages load, and behind the window controls. One colour, or `{ "light": "#ffffff", "dark": "#1e1e1e" }`, which follows the system theme. |
 | `window.titleBar` | `"default"` is the normal title bar. `"hidden"` makes the window controls float over the page, so the app gets the whole window. |
 | `permissions` | `notifications`, `camera`, `microphone`, `clipboard`, `geolocation`. Anything not listed is refused. |
 | `dev` | Optional. `pane dev` runs `command` and loads `url`, which must be on `localhost`. `{port}` is a free port that Pane picks. Leave out `command` if you start the server yourself. |
@@ -98,9 +99,41 @@ const off = pane.on('progress', (p) => {}); // backend events; off() stops liste
 pane.app;                                   // { id, name, version, dev, hasBackend, pane }
 await pane.window.open('settings.html', { width: 480, height: 360 });
 await pane.window.open('index.html#about'); // single-page apps: same page, another view
+await pane.window.open('index.html#note=42', { key: 'note-42' }); // remembers size and position; never opened twice
 pane.window.close(); pane.window.minimize(); pane.window.toggleMaximize();
 await pane.openExternal('https://example.com');
 ```
+
+### Native features
+
+```js
+// Dialogs
+const files = await pane.dialog.open({ filters: [{ name: 'Markdown', extensions: ['md'] }], multiple: true });
+const target = await pane.dialog.save({ defaultPath: 'note.md' });   // null if cancelled
+if (await pane.dialog.confirm('Delete this note?', { okLabel: 'Delete', type: 'warning' })) { /* ... */ }
+const button = await pane.dialog.message({ message: 'Saved', detail: '...', buttons: ['OK'] });
+
+// Menus: items in File, Edit, View, Window or Help merge into Pane's standard menus
+await pane.menu.set([
+  { label: 'File', items: [{ label: 'New Note', id: 'new', shortcut: 'CmdOrCtrl+N' }] },
+]);
+pane.on('pane:menu', ({ id }) => { if (id === 'new') createNote(); });  // in the window it was used in
+const choice = await pane.menu.popup([{ label: 'Delete', id: 'delete' }]); // context menu, id or null
+
+await pane.shell.showItemInFolder('/Users/me/notes/a.md');           // Finder / Explorer
+await pane.notify({ title: 'Export finished' });                       // needs "notifications" permission
+
+await pane.store.set('theme', { dark: true });                         // small JSON settings, same in dev and installed
+await pane.secrets.set('token', 'abc');                                // encrypted with the system keychain
+```
+
+Pages never get file access. A dialog returns paths, and the page passes them to the backend, which reads or writes the files.
+
+`pane.secrets` refuses to work where there is no real keychain, for example Linux without a keyring, rather than storing secrets in a form anyone could read.
+
+### Testing your app
+
+Under `pane dev`, `PANE_TEST_DIALOGS` answers dialogs instead of showing them, so end-to-end tests don't stop at a dialog. For example, `PANE_TEST_DIALOGS='{"message":0,"save":"/tmp/out.md"}' pane dev`. Installed apps ignore it.
 
 Pages have no access to Node or Electron, and they can only load the app's own files. Web links open in the user's browser.
 

@@ -91,6 +91,7 @@ if (info.app.dev) {
 }
 
 const win = (name, arg) => ipcRenderer.invoke('pane:window', name, arg).then(unwrap);
+const invoke = (channel, ...args) => ipcRenderer.invoke(channel, ...args).then(unwrap);
 
 contextBridge.exposeInMainWorld('pane', {
   app: Object.freeze({ ...info.app }),
@@ -124,4 +125,48 @@ contextBridge.exposeInMainWorld('pane', {
   }),
 
   openExternal: (url) => ipcRenderer.invoke('pane:open-external', url).then(unwrap),
+
+  dialog: Object.freeze({
+    // Paths the user picked ([] if cancelled). { title, defaultPath, buttonLabel, filters, multiple, directory }
+    open: (options = {}) => invoke('pane:dialog', 'open', options),
+    // The path to save to, or null if cancelled. { title, defaultPath, buttonLabel, filters }
+    save: (options = {}) => invoke('pane:dialog', 'save', options),
+    // The index of the button pressed. { message, detail, type, buttons, defaultId, cancelId }
+    message: (options) => invoke('pane:dialog', 'message', options),
+    // true if the user confirmed. pane.dialog.confirm('Delete this note?', { detail, okLabel: 'Delete' })
+    confirm: async (message, { detail, okLabel = 'OK', cancelLabel = 'Cancel', type = 'question' } = {}) =>
+      (await invoke('pane:dialog', 'message', { message, detail, type, buttons: [okLabel, cancelLabel], defaultId: 0, cancelId: 1 })) === 0,
+  }),
+
+  menu: Object.freeze({
+    // The app's menus: [{ label: 'File', items: [{ label: 'New Note', id: 'new', shortcut: 'CmdOrCtrl+N' }] }]
+    // Clicks arrive as pane.on('pane:menu', ({ id }) => ...) in the window they were used in.
+    set: (menus) => invoke('pane:menu', 'set', menus),
+    // A context menu at the pointer (or { x, y }). Resolves to the clicked item's id, or null.
+    popup: (items, at = {}) => invoke('pane:menu', 'popup', { items, x: at.x, y: at.y }),
+  }),
+
+  shell: Object.freeze({
+    // Shows a file or folder in Finder / Explorer.
+    showItemInFolder: (fullPath) => invoke('pane:shell', 'showItemInFolder', fullPath),
+  }),
+
+  // A system notification. Needs "notifications" in pane.json's permissions.
+  // Clicks arrive as pane.on('pane:notification-click', ({ id }) => ...).
+  notify: (options) => invoke('pane:notify', options),
+
+  // Small JSON settings, kept by Pane for this app (the same in dev and installed).
+  store: Object.freeze({
+    get: (key) => invoke('pane:store', 'get', key),
+    set: (key, value) => invoke('pane:store', 'set', key, value),
+    delete: (key) => invoke('pane:store', 'delete', key),
+    all: () => invoke('pane:store', 'all'),
+  }),
+
+  // Text encrypted with the system keychain: tokens, passwords.
+  secrets: Object.freeze({
+    get: (key) => invoke('pane:secrets', 'get', key),
+    set: (key, value) => invoke('pane:secrets', 'set', key, value),
+    delete: (key) => invoke('pane:secrets', 'delete', key),
+  }),
 });
