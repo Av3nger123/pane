@@ -9,13 +9,15 @@
 const path = require('path');
 const { app, BrowserWindow, Menu, dialog, ipcMain, session, shell } = require('electron');
 
+// protocol.js does not read PANE_HOME, so it can load before readBoot().
+const { registerScheme, serveApp, makeIsAppUrl, isLocalDevUrl } = require('./lib/protocol');
+
 const boot = readBoot();
-if (boot.home) process.env.PANE_HOME = boot.home;
+if (boot.home) process.env.PANE_HOME = boot.home; // before anything reads Pane's paths
 
 const { loadManifest } = require('./lib/manifest');
 const { satisfies } = require('./lib/version');
 const { RUNTIME_VERSION, dataDir } = require('./lib/paths');
-const { registerScheme, serveApp, originFor } = require('./lib/protocol');
 const { Backend } = require('./lib/backend');
 const { createWindowManager } = require('./lib/windows');
 const { buildMenu } = require('./lib/menu');
@@ -27,8 +29,14 @@ const EXIT_RESTART = 75;
 function readBoot() {
   if (global.__paneBoot) return global.__paneBoot;
   const args = process.argv.slice(1);
-  const appArg = args.find((a) => a.startsWith('--app='));
-  return { appDir: appArg ? appArg.slice('--app='.length) : null, dev: args.includes('--dev') };
+  const value = (name) => {
+    const arg = args.find((a) => a.startsWith(`--${name}=`));
+    return arg ? arg.slice(name.length + 3) : null;
+  };
+  const dev = args.includes('--dev');
+  // A dev server is only ever used in dev mode, and only on this computer.
+  const devUrl = dev && isLocalDevUrl(value('dev-url')) ? value('dev-url') : null;
+  return { appDir: value('app'), dev, devUrl };
 }
 
 function fail(title, message) {
@@ -42,7 +50,7 @@ function start() {
 
   let manifest;
   try {
-    manifest = loadManifest(path.resolve(boot.appDir));
+    manifest = loadManifest(path.resolve(boot.appDir), { requireUi: !boot.devUrl });
   } catch (err) {
     return fail('This app could not start', err.message);
   }
@@ -66,21 +74,25 @@ function start() {
     logFile: boot.dev ? null : path.join(userData, 'logs', 'backend.log'),
   });
   let windows = null;
+  const isAppUrl = makeIsAppUrl(manifest, boot.devUrl);
 
   app.on('second-instance', () => { if (windows) windows.focusMain(); });
   app.on('window-all-closed', () => app.quit());
   app.on('will-quit', () => backend.stop());
-  app.on('web-contents-created', (_e, contents) => lockDownContents(contents, manifest));
+  app.on('web-contents-created', (_e, contents) => lockDownContents(contents, isAppUrl));
 
   app.whenReady().then(() => {
     const ses = session.defaultSession;
     serveApp(ses, manifest);
-    applyPermissions(ses, manifest);
+    applyPermissions(ses, manifest, isAppUrl);
 
-    windows = createWindowManager(manifest, { dev: boot.dev });
-    wireIpc(manifest, backend, windows);
+    windows = createWindowManager(manifest, { dev: boot.dev, devUrl: boot.devUrl, isAppUrl });
+    wireIpc(manifest, backend, windows, isAppUrl);
     backend.on('emit', (payload) => windows.broadcast('pane:event', payload));
-    backend.on('exit', (code) => windows.broadcast('pane:event', { event: 'pane:backend-exit', data: { code } }));
+    backend.on('exit', ({ code, log, willRestart }) => windows.broadcast('pane:event', {
+      event: 'pane:backend-exit',
+      data: { code, willRestart, log: boot.dev ? log : undefined },
+    }));
     backend.on('restart', () => windows.broadcast('pane:event', { event: 'pane:backend-restart', data: null }));
     if (boot.dev) backend.on('log', (entry) => windows.broadcast('pane:log', entry));
 
@@ -91,21 +103,23 @@ function start() {
     windows.open({ main: true });
 
     if (boot.dev) {
+      if (boot.devUrl) console.log(`[pane] loading ${boot.devUrl} (dev server)`);
       watchForDev(manifest, {
         windows,
         backend,
+        reloadUi: !boot.devUrl, // a dev server reloads its own pages
         onManifestChange: () => { backend.stop(); app.exit(EXIT_RESTART); },
       });
     }
+  }).catch((err) => {
+    // Never leave a running app with no window.
+    backend.stop();
+    fail(`${manifest.name} could not start`, (err && err.stack) || String(err));
   });
 }
 
-function wireIpc(manifest, backend, windows) {
-  const origin = originFor(manifest);
-  const fromApp = (e) => {
-    const url = (e.senderFrame && e.senderFrame.url) || '';
-    return url === origin || url.startsWith(`${origin}/`);
-  };
+function wireIpc(manifest, backend, windows, isAppUrl) {
+  const fromApp = (e) => isAppUrl((e.senderFrame && e.senderFrame.url) || '');
   const deny = { ok: false, error: { message: 'Not allowed from this page.' } };
 
   ipcMain.on('pane:info', (e) => {
@@ -142,6 +156,12 @@ function wireIpc(manifest, backend, windows) {
     }
   });
 
+  // Dev-only helpers used by the crash screen.
+  ipcMain.on('pane:dev', (e, action) => {
+    if (!boot.dev || !fromApp(e)) return;
+    if (action === 'restart-backend') backend.restart();
+  });
+
   ipcMain.handle('pane:open-external', async (e, url) => {
     if (!fromApp(e)) return deny;
     if (!isExternalUrl(url)) return { ok: false, error: { message: 'Only http, https and mailto links can be opened.' } };
@@ -151,14 +171,13 @@ function wireIpc(manifest, backend, windows) {
 }
 
 // Pages stay on the app's own origin. Web links open in the user's browser.
-function lockDownContents(contents, manifest) {
-  const origin = originFor(manifest);
+function lockDownContents(contents, isAppUrl) {
   contents.setWindowOpenHandler(({ url }) => {
     if (isExternalUrl(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
   contents.on('will-navigate', (e, url) => {
-    if (url === origin || url.startsWith(`${origin}/`)) return;
+    if (isAppUrl(url)) return;
     e.preventDefault();
     if (isExternalUrl(url)) shell.openExternal(url);
   });
@@ -167,8 +186,7 @@ function lockDownContents(contents, manifest) {
 
 // Only what pane.json asks for. macOS then asks the user for camera and
 // microphone in the app's own name.
-function applyPermissions(ses, manifest) {
-  const origin = originFor(manifest);
+function applyPermissions(ses, manifest, isAppUrl) {
   const allowed = new Set(manifest.permissions);
   const decide = (permission, details = {}) => {
     switch (permission) {
@@ -190,13 +208,12 @@ function applyPermissions(ses, manifest) {
         return false;
     }
   };
-  const fromOrigin = (url) => typeof url === 'string' && (url === origin || url.startsWith(`${origin}/`));
   ses.setPermissionRequestHandler((_wc, permission, callback, details) => {
-    callback(fromOrigin(details.requestingUrl) && decide(permission, details));
+    callback(isAppUrl(details.requestingUrl) && decide(permission, details));
   });
   ses.setPermissionCheckHandler((_wc, permission, requestingOrigin, details) => {
     const from = requestingOrigin || (details && details.requestingUrl);
-    return fromOrigin(from) && decide(permission, details || {});
+    return isAppUrl(from) && decide(permission, details || {});
   });
 }
 

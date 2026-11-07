@@ -10,7 +10,8 @@ const path = require('path');
 const { satisfies, isValidSpec } = require('../lib/version');
 const { resolveInside } = require('../lib/safe-path');
 const { loadManifest, ManifestError } = require('../lib/manifest');
-const { appFiles } = require('../lib/templates');
+const { appFiles, TEMPLATES } = require('../lib/templates');
+const { freePort, waitForUrl } = require('../lib/run');
 const { defaultIconPng } = require('../lib/icon');
 const { execName, fileName } = require('../lib/launcher');
 
@@ -90,16 +91,63 @@ test('manifest: missing files and bad JSON', () => {
   assert.throws(() => loadManifest(tmpApp({ 'pane.json': '{"id":"a","name":"A","backend":"b.js"}', 'ui/index.html': '' })), /backend file "b.js" does not exist/);
 });
 
-test('templates produce a valid app, with and without a backend', () => {
-  for (const backend of [true, false]) {
-    const dir = tmpApp(appFiles({ id: 'demo', name: 'Demo', backend }));
-    fs.writeFileSync(path.join(dir, 'icon.png'), defaultIconPng({ size: 64 }));
-    const m = loadManifest(dir);
-    assert.equal(Boolean(m.backend), backend);
-    assert.equal(m.window.titleBar, 'hidden');
-    const html = fs.readFileSync(path.join(dir, 'ui', 'about.html'), 'utf8');
-    assert.ok(!/<script>/.test(html), 'no inline scripts: the template CSP forbids them');
+const PANE_DEP = { name: 'pane-runtime', spec: '^0.1.0' };
+
+test('every template produces a valid app, with and without a backend', () => {
+  for (const template of TEMPLATES) {
+    for (const backend of [true, false]) {
+      const dir = tmpApp(appFiles({ id: 'demo', name: 'Demo {x}', template, backend, paneDependency: PANE_DEP }));
+      fs.writeFileSync(path.join(dir, 'icon.png'), defaultIconPng({ size: 64 }));
+      const m = loadManifest(dir, { requireUi: template === 'vanilla' });
+      assert.equal(Boolean(m.backend), backend, `${template} backend=${backend}`);
+      assert.equal(m.window.titleBar, 'hidden');
+      if (template === 'vanilla') {
+        const html = fs.readFileSync(path.join(dir, 'ui', 'about.html'), 'utf8');
+        assert.ok(!/<script>/.test(html), 'no inline scripts: the template CSP forbids them');
+        assert.equal(m.dev, null);
+      } else {
+        assert.equal(m.ui, 'dist');
+        assert.match(m.dev.url, /\{port\}/);
+        assert.equal(m.build.command, 'vite build');
+        const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+        assert.equal(pkg.devDependencies['pane-runtime'], '^0.1.0');
+        assert.deepEqual(pkg.dependencies, {}, 'frontend libraries are devDependencies');
+        const source = fs.readFileSync(path.join(dir, template === 'react' ? 'src/App.jsx' : 'src/App.svelte'), 'utf8');
+        assert.ok(!source.includes('Demo {x}'), 'braces in the app name are escaped in markup');
+        if (backend) assert.match(fs.readFileSync(path.join(dir, 'backend/main.js'), 'utf8'), /^import pane from 'pane';/m);
+      }
+    }
   }
+  assert.throws(() => appFiles({ id: 'a', name: 'A', template: 'angular' }), /Unknown template/);
+});
+
+test('manifest: dev and build commands', () => {
+  const base = { id: 'a', name: 'A', ui: 'dist' };
+  const write = (extra) => tmpApp({ 'pane.json': JSON.stringify({ ...base, ...extra }) });
+  const ok = loadManifest(write({
+    dev: { command: 'vite --port {port}', url: 'http://localhost:{port}' }, build: { command: 'vite build' },
+  }), { requireUi: false });
+  assert.deepEqual({ ...ok.dev }, { command: 'vite --port {port}', url: 'http://localhost:{port}' });
+  assert.deepEqual({ ...ok.build }, { command: 'vite build' });
+
+  const urlOnly = loadManifest(write({ dev: { url: 'http://127.0.0.1:3000/' } }), { requireUi: false });
+  assert.equal(urlOnly.dev.command, null, 'a dev server you start yourself');
+
+  assert.throws(() => loadManifest(write({ dev: { command: 'x', url: 'https://example.com' } }), { requireUi: false }), /local address/);
+  assert.throws(() => loadManifest(write({ dev: { command: 'x', url: 'http://192.168.1.4:3000' } }), { requireUi: false }), /local address/);
+  assert.throws(() => loadManifest(write({ dev: { command: 'vite', url: 'http://localhost:{port}' } }), { requireUi: false }), /must pass \{port\}/);
+  assert.throws(() => loadManifest(write({ build: 'vite build' }), { requireUi: false }), /"build" must be an object/);
+  assert.throws(() => loadManifest(write({ build: { command: 'vite build' } })), /Run `pane build`/, 'missing ui folder mentions the build');
+});
+
+test('run helpers: free port and waiting for a server', async () => {
+  const port = await freePort();
+  assert.ok(port > 0 && port < 65536);
+  const http = require('http');
+  const server = http.createServer((_q, r) => r.end('ok')).listen(port, '127.0.0.1');
+  await waitForUrl(`http://127.0.0.1:${port}/`, { timeout: 3000 });
+  server.close();
+  await assert.rejects(waitForUrl(`http://127.0.0.1:${port}/`, { timeout: 400 }), /did not answer/);
 });
 
 test('default icon is a real PNG of the requested size', () => {
@@ -114,4 +162,41 @@ test('launcher names are safe', () => {
   assert.equal(execName('日本'), 'Pane App');
   assert.equal(fileName('A/B:C?'), 'ABC');
   assert.equal(fileName('Reports...'), 'Reports');
+});
+
+test('distribution address: https only (or a local test server)', () => {
+  const { distributionUrl } = require('../lib/install');
+  const saved = process.env.PANE_DIST_URL;
+  try {
+    process.env.PANE_DIST_URL = 'https://downloads.example.com/pane/';
+    assert.equal(distributionUrl(), 'https://downloads.example.com/pane');
+    process.env.PANE_DIST_URL = 'http://127.0.0.1:8080';
+    assert.equal(distributionUrl(), 'http://127.0.0.1:8080');
+    process.env.PANE_DIST_URL = 'http://downloads.example.com/pane';
+    assert.throws(() => distributionUrl(), /must use https/);
+  } finally {
+    if (saved === undefined) delete process.env.PANE_DIST_URL; else process.env.PANE_DIST_URL = saved;
+  }
+});
+
+test('pane build writes installers that know the Pane version and address', { skip: process.platform === 'win32' }, async () => {
+  const { buildInstaller } = require('../lib/install');
+  const { RUNTIME_VERSION } = require('../lib/paths');
+  const { execFileSync } = require('child_process');
+  const dir = tmpApp(appFiles({ id: 'demo', name: "Demo's App", template: 'vanilla', backend: true }));
+  fs.writeFileSync(path.join(dir, 'icon.png'), defaultIconPng({ size: 64 }));
+  const saved = process.env.PANE_DIST_URL;
+  process.env.PANE_DIST_URL = 'https://downloads.example.com/pane';
+  try {
+    const result = await buildInstaller(dir);
+    assert.deepEqual(result.warnings, []);
+    const sh = fs.readFileSync(result.installers[0], 'utf8');
+    assert.ok(sh.includes(`PANE_VERSION='${RUNTIME_VERSION}'`));
+    assert.ok(sh.includes('DIST_URL="${PANE_DIST_URL:-https://downloads.example.com/pane}"'));
+    assert.ok(sh.includes("APP_NAME='Demo'\\''s App'"), 'quotes in the app name are escaped');
+    execFileSync('sh', ['-n', result.installers[0]]); // valid shell syntax
+    assert.ok(!fs.readdirSync(result.outDir).some((f) => f.startsWith('pane-runtime')), 'Pane itself is never bundled');
+  } finally {
+    if (saved === undefined) delete process.env.PANE_DIST_URL; else process.env.PANE_DIST_URL = saved;
+  }
 });

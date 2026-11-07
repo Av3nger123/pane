@@ -1,17 +1,41 @@
 {
-  "name": "pane",
+  "name": "pane-runtime",
   "version": "0.1.0",
   "private": true,
-  "description": "Pane: one shared desktop runtime (Chromium, Node, Python bridge) for many small apps.",
-  "main": "main.js",
+  "description": "Pane: one shared desktop runtime (Chromium + Node) for many small apps.",
+  "pane": {
+    "distributionUrl": ""
+  },
   "bin": {
     "pane": "bin/pane.js"
   },
+  "main": "backend-modules/pane/index.js",
+  "types": "types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "default": "./backend-modules/pane/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "main.js",
+    "preload.js",
+    "bin",
+    "lib",
+    "backend-modules",
+    "types",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "test": "node --test test/*.test.js",
-    "smoke": "node test/smoke.js"
+    "smoke": "node test/smoke.js",
+    "test:templates": "node test/templates.js"
   },
-  "devDependencies": {
+  "dependencies": {
     "electron": "45.2.3"
   }
 }

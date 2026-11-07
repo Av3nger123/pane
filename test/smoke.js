@@ -85,9 +85,19 @@ async function main() {
     assert.ok(nav.startsWith('pane-app://smoke-app/'), `navigation stayed in the app: ${nav}`);
     ok('navigating away from the app is refused');
 
-    fs.appendFileSync(path.join(appDir, 'backend', 'main.js'), '\npane.expose("added", () => "hot");\n');
+    const hashWin = await run('pane.window.open("about.html#details", { width: 440, height: 320 })');
+    assert.equal(typeof hashWin, 'number');
+    await waitForPage('about.html#details');
+    ok('pages can be opened with a #hash');
+
+    fs.appendFileSync(path.join(appDir, 'backend', 'main.js'), '\npane.expose("added", () => "hot");\npane.expose("crash", () => process.exit(3));\n');
     await waitFor(async () => (await run('pane.call("added").catch(() => null)')) === 'hot', 'backend restart after edit', 8000);
     ok('editing the backend restarts it (pane dev)');
+
+    const crash = await run('pane.call("crash").then(() => "no error", (e) => e.message)');
+    assert.match(crash, /backend stopped \(exit code 3\)/);
+    await waitFor(() => run('Boolean(document.querySelector("pane-dev-overlay"))'), 'the crash overlay');
+    ok('a backend crash rejects the call and shows the crash overlay (pane dev)');
 
     cdp.close();
     console.log('\nAll smoke checks passed.');
@@ -135,8 +145,10 @@ function connect(url) {
         if (msg.error) rej(new Error(msg.error.message)); else res(msg.result);
       }
     };
-    ws.onerror = () => reject(new Error('could not connect to the window'));
+    const timer = setTimeout(() => { ws.close(); reject(new Error('timed out connecting to the window')); }, 10000);
+    ws.onerror = () => { clearTimeout(timer); reject(new Error('could not connect to the window')); };
     ws.onopen = () => {
+      clearTimeout(timer);
       const call = (method, params) => new Promise((res, rej) => {
         const n = ++id;
         waiting.set(n, { res, rej });

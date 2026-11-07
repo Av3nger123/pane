@@ -1,31 +1,49 @@
 # Pane
 
-Pane is installed on a computer once. After that, every Pane app uses Pane's Chromium and Node, so an app is only its own files: a few hundred KB instead of the 150 to 300 MB that each Electron app ships.
+Pane is installed on a computer once. After that, every Pane app uses Pane's Chromium and Node, so an app is only its own files: tens of KB instead of the 150 to 300 MB that each Electron app ships.
 
 Each app still behaves like a normal desktop app:
 - It runs in its own process.
 - It opens as many windows as it needs.
 - It has its own name and icon in the Dock or taskbar, and its own data.
 
-## Make an app
+## Start an app
 
 ```sh
-npm install                       # once, in this folder (downloads Electron)
-node bin/pane.js create my-app    # or: pane create my-app
-node bin/pane.js dev my-app
+npm create pane-app@latest my-app            # asks for a template: react, svelte, vanilla
+cd my-app && npm run dev
 ```
 
-`pane dev` reloads windows when the web files change. It restarts the backend when backend code changes, and restarts the whole app when `pane.json` changes. The **Develop** menu has Reload, Restart Backend and Developer Tools.
+Or from this repository:
 
-An app is a folder:
+```sh
+npm install
+node bin/pane.js create my-app --template react   # react | svelte | vanilla
+cd my-app && npm run dev
+```
+
+| Template | What you get |
+|---|---|
+| `react`, `svelte` | Vite. `pane dev` starts Vite's dev server and loads it, so components hot-reload in place. `pane build` runs `vite build` and packages `dist/`. |
+| `vanilla` | Plain HTML, CSS and JavaScript in `ui/`. No build step and no npm install. `pane dev` reloads the window when you save. |
+
+`pane dev`, for every template:
+- restarts the backend when its code changes
+- restarts the app when `pane.json` changes
+- shows a backend crash in the window, with its last output and a Restart button
+- shows an error page, instead of a blank window, when a page fails to load
+
+The **Develop** menu has Reload, Restart Backend and Developer Tools. To pass flags to Chromium, put them after `--`: `pane dev -- --remote-debugging-port=9222`.
+
+## An app
 
 ```
 my-app/
   pane.json          name, id, version, windows, permissions
   icon.png           square PNG, 512 px or more
-  ui/                the app's web files: any HTML/CSS/JS, any framework's build output
-    index.html
+  ui/ or dist/       the web files Pane serves
   backend/main.js    optional: Node, running on Pane's built-in Node
+  package.json       framework templates only
 ```
 
 ### pane.json
@@ -36,12 +54,14 @@ my-app/
   "name": "My App",
   "version": "0.1.0",
   "pane": ">=0.1.0",
-  "ui": "ui",
+  "ui": "dist",
   "start": "index.html",
   "backend": "backend/main.js",
   "icon": "icon.png",
   "window": { "width": 960, "height": 640, "titleBar": "hidden", "background": "#f6f6f3" },
-  "permissions": ["notifications"]
+  "permissions": ["notifications"],
+  "dev": { "command": "vite --port {port} --strictPort", "url": "http://localhost:{port}" },
+  "build": { "command": "vite build" }
 }
 ```
 
@@ -49,71 +69,116 @@ my-app/
 |---|---|
 | `id` | Lowercase letters, digits and dashes. Identifies the app and its data. |
 | `pane` | Pane versions the app works with: `">=0.1.0"`, `"^1.2.0"`. |
-| `backend` | Optional. A Node file that runs in its own process. |
+| `ui`, `start` | The folder Pane serves, and the first page in it. |
+| `backend` | Optional. A Node file (CommonJS or ES module) that runs in its own process. |
 | `window.titleBar` | `"default"` is the normal title bar. `"hidden"` makes the window controls float over the page, so the app gets the whole window. |
 | `permissions` | `notifications`, `camera`, `microphone`, `clipboard`, `geolocation`. Anything not listed is refused. |
+| `dev` | Optional. `pane dev` runs `command` and loads `url`, which must be on `localhost`. `{port}` is a free port that Pane picks. Leave out `command` if you start the server yourself. |
+| `build` | Optional. `pane build` runs it first. |
 
 ### In the page: `window.pane`
 
 ```js
-await pane.call('save', note);            // call a backend function, get its return value
-pane.send('refresh', data);               // send an event to the backend, no answer
+await pane.call('save', note);              // call a backend function, get its return value
+pane.send('refresh', data);                 // send an event to the backend, no answer
 const off = pane.on('progress', (p) => {}); // backend events; off() stops listening
-pane.app;                                 // { id, name, version, dev, hasBackend, pane }
+pane.app;                                   // { id, name, version, dev, hasBackend, pane }
 await pane.window.open('settings.html', { width: 480, height: 360 });
+await pane.window.open('index.html#about'); // single-page apps: same page, another view
 pane.window.close(); pane.window.minimize(); pane.window.toggleMaximize();
 await pane.openExternal('https://example.com');
 ```
 
-Pages have no access to Node or Electron, and they can only load the app's own `ui` folder. Web links open in the user's browser.
+Pages have no access to Node or Electron, and they can only load the app's own files. Web links open in the user's browser.
 
-With `"titleBar": "hidden"`, Pane sets `--pane-safe-top`, `--pane-safe-left` and `--pane-safe-right` on `<html>`. Keep content out of that space, and give your top bar `-webkit-app-region: drag` so the window can be moved. The values change when the window enters or leaves full screen.
+With `"titleBar": "hidden"`, Pane sets `--pane-safe-top`, `--pane-safe-left` and `--pane-safe-right` on `<html>`. Keep content out of that space, and give your top bar `-webkit-app-region: drag` so the window can be moved.
 
-### In the backend: `require('pane')`
+### In the backend: `import pane from 'pane'`
 
 ```js
-const pane = require('pane');
+import pane from 'pane';                    // or: const pane = require('pane')
 pane.expose('save', async (note) => { /* ... */ return id; });
-pane.expose({ list, remove });             // several at once
+pane.expose({ list, remove });              // several at once
 pane.on('refresh', (data) => {});
-pane.emit('progress', 0.5);                // to every window
-pane.app.dataDir;                          // private folder for this app's files
+pane.emit('progress', 0.5);                 // to every window
+pane.app.dataDir;                           // private folder for this app's files
 ```
 
-The backend is full Node: `fs`, `child_process`, network access and npm packages. `console.log` output appears in the terminal and the window's console during `pane dev`. In installed apps it goes to `<Pane home>/data/<id>/logs/backend.log`.
+The backend is full Node: `fs`, `child_process`, network access and npm packages. Packages the backend needs at runtime go in `dependencies`. Build tools and frontend libraries go in `devDependencies`. If a backend crashes in an installed app, Pane restarts it, up to three times a minute.
+
+### TypeScript
+
+The framework templates include Pane's types. To type your backend calls, declare them once:
+
+```ts
+declare global {
+  interface PaneBackend {
+    save(note: { title: string }): Promise<number>;
+  }
+}
+const id = await pane.call('save', { title: 'x' });   // id: number
+```
 
 ## Ship an app
 
 ```sh
-pane build my-app                  # needs Pane on the user's computer
-pane build my-app --with-runtime   # includes Pane (about 116 MB) for computers without it
+pane build my-app        # or: npm run build
 ```
 
-`my-app/dist/My App 0.1.0/` contains:
-- `my-app-0.1.0.paneapp`: the app.
-- `Install My App.command`: double-click it on macOS or Linux. If Pane is missing, it installs Pane first, then installs the app and opens it. If Pane is already there, it installs only the app.
+This writes `my-app/release/My App 0.1.0/`:
+- `my-app-0.1.0.paneapp`: the app, with production dependencies only.
+- `Install My App.command`: macOS and Linux.
+- `Install My App.cmd`: Windows (not yet tested).
+
+**Installers never contain Pane.** Each one records the Pane version the app was built with:
+1. If the computer has that version of Pane or newer, the installer installs only the app.
+2. If Pane is missing or older, the installer downloads that version from Pane's distribution server. It checks the SHA-256 checksum, installs Pane next to any older versions, then installs and opens the app.
+3. If the checksum doesn't match, the installer stops and installs nothing.
+
+### Pane's distribution server
+
+Set the address once in Pane's `package.json`:
+
+```json
+"pane": { "distributionUrl": "https://downloads.example.com/pane" }
+```
+
+`PANE_DIST_URL` overrides it, for example for testing. The address must use https, except `localhost` while testing. Then, on each OS and processor you support, run:
+
+```sh
+pane pack-runtime --out pane-dist
+```
+
+Upload what it writes, keeping the folder layout:
+
+```
+<distributionUrl>/v0.1.0/pane-runtime-0.1.0-darwin-arm64.tar.gz
+<distributionUrl>/v0.1.0/pane-runtime-0.1.0-darwin-arm64.tar.gz.sha256
+```
 
 ## What installing does
 
-- **Pane** goes to `~/Library/Application Support/Pane/runtime/<version>`, and the `pane` command to `.../Pane/bin/pane`. That command runs on Pane's own Electron, so users don't need Node.
+- **Pane** goes to `~/Library/Application Support/Pane/runtime/<version>`, and the `pane` command to `.../Pane/bin/pane`. That command runs on Pane's own Electron, so users don't need Node. Several versions can be installed side by side, and the default only moves forward.
 - **Apps** go to `.../Pane/apps/<id>`, and their data to `.../Pane/data/<id>`.
-- **On macOS**, the launcher is `~/Applications/Pane Apps/<App>.app`. It's a real app bundle with its own bundle id, name, icon and helper processes. Its 251 MB Chromium framework is an APFS clone of Pane's copy, so it takes about 1.4 MB of real disk. A symlink doesn't work, because Chromium's sandboxed helpers refuse files outside their bundle.
+- **On macOS**, the launcher is `~/Applications/Pane Apps/<App>.app`. It's a real app bundle with its own bundle id, name, icon and helper processes. Its 251 MB Chromium framework is an APFS clone of Pane's copy, so it takes about 1.4 MB of real disk.
 
-Other commands: `pane install <folder|.paneapp>`, `pane uninstall <id> [--purge]`, `pane list`, `pane setup`.
+Other commands: `pane install <folder|.paneapp>`, `pane uninstall <id> [--purge]`, `pane list`, `pane setup`, `pane run`.
 
 Set `PANE_HOME` and `PANE_LAUNCHERS_DIR` to install somewhere else, for example while testing.
 
 ## Tests
 
 ```sh
-npm test         # unit tests, no window
-npm run smoke    # creates an app, opens it, and drives the real window
+npm test                  # unit tests, no window
+npm run smoke             # creates an app, opens it, and drives the real window
+npm run test:templates    # React and Svelte: npm install, Vite dev server, hot reload, build (needs network)
 ```
+
+CI (`.github/workflows/ci.yml`) runs the unit and smoke tests on macOS, Windows and Linux, and the template tests on macOS.
 
 ## Not done yet
 
-- **Windows and Linux** launchers and installers are written but not tested. They create a Start menu shortcut or `.desktop` file instead of an app bundle.
+- **Windows and Linux** launchers and installers are written but not tested.
 - **No updater.** A launcher keeps the Chromium it was installed with until the app is installed again.
-- **Signing.** Launchers are signed ad hoc. Downloads on other Macs need Developer ID signing and notarization, and Windows needs a code-signing certificate.
-- **Online install.** Installers built without `--with-runtime` download Pane from `PANE_DOWNLOAD_URL`, but nothing hosts Pane yet.
-- **No catalog.**
+- **Signing.** Launchers are signed ad hoc. Pane's downloads are checked against a checksum served from the same server, which proves integrity, not authenticity. Developer ID signing, notarization and signed releases come in phase 4.
+- **Not on npm yet.** `pane-runtime` and `create-pane-app` are marked private until a name and license are chosen.
