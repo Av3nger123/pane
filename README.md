@@ -1,3 +1,5 @@
+<img src="assets/icon.svg" width="72" height="72" alt="">
+
 # Pane
 
 Pane is installed on a computer once. After that, every Pane app uses Pane's Chromium and Node, so an app is only its own files: tens of KB instead of the 150 to 300 MB that each Electron app ships.
@@ -9,16 +11,19 @@ Each app still behaves like a normal desktop app:
 
 ## Start an app
 
+Pane comes from GitHub, not npm. Install the `pane` command from a release:
+
 ```sh
-npm create pane-app@latest my-app            # asks for a template: react, svelte, vanilla
+npm install -g https://github.com/Av3nger123/pane/releases/download/v0.1.0/pane-runtime-0.1.0.tgz
+pane create my-app --template react    # react | svelte | vanilla
 cd my-app && npm run dev
 ```
 
-Or from this repository:
+Or from a clone of this repository:
 
 ```sh
 npm install
-node bin/pane.js create my-app --template react   # react | svelte | vanilla
+node bin/pane.js create my-app --template react
 cd my-app && npm run dev
 ```
 
@@ -135,26 +140,30 @@ This writes `my-app/release/My App 0.1.0/`:
 2. If Pane is missing or older, the installer downloads that version from Pane's distribution server. It checks the SHA-256 checksum, installs Pane next to any older versions, then installs and opens the app.
 3. If the checksum doesn't match, the installer stops and installs nothing.
 
-### Pane's distribution server
+### Where Pane is downloaded from: GitHub Releases
 
-Set the address once in Pane's `package.json`:
+Pane's `package.json` sets the address:
 
 ```json
-"pane": { "distributionUrl": "https://downloads.example.com/pane" }
+"pane": { "distributionUrl": "https://github.com/Av3nger123/pane/releases/download" }
 ```
 
-`PANE_DIST_URL` overrides it, for example for testing. The address must use https, except `localhost` while testing. Then, on each OS and processor you support, run:
+An installer for an app built with Pane 0.1.0 downloads:
+
+```
+https://github.com/Av3nger123/pane/releases/download/v0.1.0/pane-runtime-0.1.0-darwin-arm64.tar.gz
+https://github.com/Av3nger123/pane/releases/download/v0.1.0/pane-runtime-0.1.0-darwin-arm64.tar.gz.sha256
+```
+
+To release a version, bump `version` in `package.json`, commit, then push a matching tag:
 
 ```sh
-pane pack-runtime --out pane-dist
+git tag v0.1.0 && git push origin v0.1.0
 ```
 
-Upload what it writes, keeping the folder layout:
+The release workflow (`.github/workflows/release.yml`) creates the GitHub release. It packs Pane on macOS, Windows and Linux and attaches each archive with its checksum. It also attaches the developer package (`pane-runtime-0.1.0.tgz`) that `npm install -g` uses.
 
-```
-<distributionUrl>/v0.1.0/pane-runtime-0.1.0-darwin-arm64.tar.gz
-<distributionUrl>/v0.1.0/pane-runtime-0.1.0-darwin-arm64.tar.gz.sha256
-```
+`pane pack-runtime --out pane-dist` makes the same files by hand. `PANE_DIST_URL` overrides the address, for example to test against a local server. The address must use https, except `localhost` while testing.
 
 ## What installing does
 
@@ -181,4 +190,8 @@ CI (`.github/workflows/ci.yml`) runs the unit and smoke tests on macOS, Windows 
 - **Windows and Linux** launchers and installers are written but not tested.
 - **No updater.** A launcher keeps the Chromium it was installed with until the app is installed again.
 - **Signing.** Launchers are signed ad hoc. Pane's downloads are checked against a checksum served from the same server, which proves integrity, not authenticity. Developer ID signing, notarization and signed releases come in phase 4.
-- **Not on npm yet.** `pane-runtime` and `create-pane-app` are marked private until a name and license are chosen.
+- **Intel Macs and Linux on ARM** have no release build yet. The release workflow builds macOS arm64, Windows x64 and Linux x64.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

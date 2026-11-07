@@ -133,10 +133,11 @@ function create(folder, flags) {
 
 // Framework templates add Pane as a devDependency, for `npm run dev` and the
 // TypeScript types. From a git checkout of Pane, link to it; otherwise use
-// the published version.
+// this version's package from Pane's GitHub release.
 function paneDependency() {
-  const spec = fs.existsSync(path.join(RUNTIME_ROOT, '.git')) ? `file:${RUNTIME_ROOT}` : `^${RUNTIME_VERSION}`;
-  return { name: PACKAGE_NAME, spec };
+  if (fs.existsSync(path.join(RUNTIME_ROOT, '.git'))) return { name: PACKAGE_NAME, spec: `file:${RUNTIME_ROOT}` };
+  const repo = require('../package.json').repository.url.replace(/\.git$/, '');
+  return { name: PACKAGE_NAME, spec: `${repo}/releases/download/v${RUNTIME_VERSION}/${PACKAGE_NAME}-${RUNTIME_VERSION}.tgz` };
 }
 
 // ---- dev / run -------------------------------------------------------------
@@ -232,8 +233,8 @@ function packRuntimeCommand(flags) {
   console.log(`Packed Pane ${RUNTIME_VERSION} for ${process.platform}-${process.arch}`);
   console.log(`  ${rel(result.archive)}  ${size(result.archive)}`);
   console.log(`  ${rel(result.archive)}.sha256`);
-  console.log(`\nUpload the contents of ${rel(path.resolve(out))} to Pane's distribution address, keeping the v${RUNTIME_VERSION}/ folder.`);
-  console.log('Run this on each OS and processor you support (macOS arm64/x64, Windows x64, ...).');
+  console.log(`\nAttach both files to the GitHub release tagged v${RUNTIME_VERSION} (the release workflow does this`);
+  console.log('for every OS when you push the tag). Other servers: upload them under v<version>/.');
   return 0;
 }
 

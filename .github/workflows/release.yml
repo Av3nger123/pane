@@ -1,0 +1,66 @@
+name: Release
+
+# Push a tag that matches package.json's version, e.g.:
+#   git tag v0.1.0 && git push origin v0.1.0
+# The release then holds everything app installers and developers download:
+#   pane-runtime-<v>-<os>-<arch>.tar.gz (+ .sha256)   Pane itself, per OS
+#   pane-runtime-<v>.tgz                              the developer package (pane CLI)
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag must match package.json
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "v$VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $VERSION"; exit 1
+          fi
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "Pane ${GITHUB_REF_NAME#v}" --generate-notes --prerelease
+
+  runtime:
+    needs: create
+    name: Pane for ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node bin/pane.js pack-runtime --out pane-dist
+      - name: Attach to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" pane-dist/"$GITHUB_REF_NAME"/* --clobber
+
+  developer-package:
+    needs: create
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm pack
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" pane-runtime-*.tgz --clobber
