@@ -39,7 +39,8 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "smoke": "node test/smoke.js",
-    "test:templates": "node test/templates.js"
+    "test:templates": "node test/templates.js",
+    "test:notes": "node test/notes.js"
   },
   "dependencies": {
     "electron": "45.2.3"

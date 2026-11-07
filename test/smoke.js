@@ -9,9 +9,10 @@ const os = require('os');
 const path = require('path');
 const { spawn, execFileSync } = require('child_process');
 const { electronBinary, RUNTIME_ROOT } = require('../lib/paths');
+const cdpHelpers = require('./cdp');
+const { sleep, waitFor, connect } = cdpHelpers;
 
 const PORT = 9300 + Math.floor(Math.random() * 500);
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'pane-smoke-'));
@@ -28,11 +29,7 @@ async function main() {
   try {
     const page = await waitForPage('index.html');
     const cdp = await connect(page.webSocketDebuggerUrl);
-    const run = async (expr) => {
-      const res = await cdp('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true });
-      if (res.exceptionDetails) throw new Error(`${expr}\n${JSON.stringify(res.exceptionDetails)}`);
-      return res.result.value;
-    };
+    const { run } = cdp;
     await waitFor(() => run('document.readyState === "complete" && typeof pane === "object"'), 'page ready');
 
     const appInfo = await run('pane.app');
@@ -113,51 +110,6 @@ async function main() {
 
 function ok(text) { console.log(`ok  ${text}`); }
 
-async function waitFor(check, what, timeout = 15000) {
-  const end = Date.now() + timeout;
-  for (;;) {
-    try { if (await check()) return; } catch { /* not yet */ }
-    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
-    await sleep(150);
-  }
-}
-
-async function waitForPage(file) {
-  let found = null;
-  await waitFor(async () => {
-    const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
-    found = list.find((t) => t.type === 'page' && t.url.endsWith(`/${file}`));
-    return Boolean(found);
-  }, `the ${file} window`);
-  return found;
-}
-
-function connect(url) {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
-    let id = 0;
-    const waiting = new Map();
-    ws.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
-      if (msg.id && waiting.has(msg.id)) {
-        const { res, rej } = waiting.get(msg.id);
-        waiting.delete(msg.id);
-        if (msg.error) rej(new Error(msg.error.message)); else res(msg.result);
-      }
-    };
-    const timer = setTimeout(() => { ws.close(); reject(new Error('timed out connecting to the window')); }, 10000);
-    ws.onerror = () => { clearTimeout(timer); reject(new Error('could not connect to the window')); };
-    ws.onopen = () => {
-      clearTimeout(timer);
-      const call = (method, params) => new Promise((res, rej) => {
-        const n = ++id;
-        waiting.set(n, { res, rej });
-        ws.send(JSON.stringify({ id: n, method, params }));
-      });
-      call.close = () => ws.close();
-      resolve(call);
-    };
-  });
-}
+const waitForPage = (file) => cdpHelpers.waitForPage(PORT, (t) => t.url.endsWith(`/${file}`), `the ${file} window`);
 
 main();

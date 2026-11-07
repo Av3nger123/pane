@@ -34,7 +34,7 @@ jobs:
         run: xvfb-run -a npm run smoke
 
   templates:
-    name: Templates (React, Svelte)
+    name: Templates and the Notes example
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
@@ -44,3 +44,5 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test:templates
+      - name: Notes example (a real app on Pane)
+        run: npm run test:notes

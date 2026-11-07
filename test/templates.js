@@ -9,9 +9,9 @@ const os = require('os');
 const path = require('path');
 const { spawn, execFileSync } = require('child_process');
 const { RUNTIME_ROOT } = require('../lib/paths');
+const { sleep, waitFor, waitForPage, connect } = require('./cdp');
 
 const CLI = path.join(RUNTIME_ROOT, 'bin', 'pane.js');
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const only = process.argv[2];
 
 async function main() {
@@ -48,11 +48,7 @@ async function checkTemplate(template, work, env) {
     const page = await waitForPage(port, (t) => t.url.startsWith('http://localhost:'));
     const viteUrl = new URL(page.url).origin;
     const cdp = await connect(page.webSocketDebuggerUrl);
-    const run = async (expr) => {
-      const res = await cdp('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true });
-      if (res.exceptionDetails) throw new Error(`${expr}\n${JSON.stringify(res.exceptionDetails)}`);
-      return res.result.value;
-    };
+    const { run } = cdp;
     await waitFor(() => run('Boolean(document.querySelector("h1"))'), 'the app to render');
     ok(`pane dev loads the Vite dev server (${viteUrl})`);
 
@@ -103,53 +99,5 @@ async function checkTemplate(template, work, env) {
 }
 
 function ok(text) { console.log(`ok  ${text}`); }
-
-async function waitFor(check, what, timeout = 30000) {
-  const end = Date.now() + timeout;
-  for (;;) {
-    try { if (await check()) return; } catch { /* not yet */ }
-    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
-    await sleep(200);
-  }
-}
-
-async function waitForPage(port, match) {
-  let found = null;
-  await waitFor(async () => {
-    const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-    found = list.find((t) => t.type === 'page' && match(t));
-    return Boolean(found);
-  }, 'the window', 60000);
-  return found;
-}
-
-function connect(url) {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
-    let id = 0;
-    const waiting = new Map();
-    ws.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
-      if (msg.id && waiting.has(msg.id)) {
-        const { res, rej } = waiting.get(msg.id);
-        waiting.delete(msg.id);
-        if (msg.error) rej(new Error(msg.error.message)); else res(msg.result);
-      }
-    };
-    const timer = setTimeout(() => { ws.close(); reject(new Error('timed out connecting to the window')); }, 10000);
-    ws.onerror = () => { clearTimeout(timer); reject(new Error('could not connect to the window')); };
-    ws.onopen = () => {
-      clearTimeout(timer);
-      const call = (method, params) => new Promise((res, rej) => {
-        const n = ++id;
-        const t = setTimeout(() => { waiting.delete(n); rej(new Error(`${method} timed out`)); }, 30000);
-        waiting.set(n, { res: (v) => { clearTimeout(t); res(v); }, rej: (e) => { clearTimeout(t); rej(e); } });
-        ws.send(JSON.stringify({ id: n, method, params }));
-      });
-      call.close = () => ws.close();
-      resolve(call);
-    };
-  });
-}
 
 main();

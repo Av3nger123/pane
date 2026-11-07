@@ -1,0 +1,20 @@
+{
+  "name": "notes",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "pane dev",
+    "build": "pane build",
+    "start": "pane run",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "pane-runtime": "file:../..",
+    "vite": "^8.3.6",
+    "@vitejs/plugin-react": "^6.2.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  }
+}

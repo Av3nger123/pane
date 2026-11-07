@@ -1,0 +1,27 @@
+{
+  "id": "notes",
+  "name": "Notes",
+  "version": "0.1.0",
+  "pane": ">=0.1.0",
+  "ui": "dist",
+  "start": "index.html",
+  "backend": "backend/main.js",
+  "icon": "icon.png",
+  "window": {
+    "width": 1040,
+    "height": 700,
+    "minWidth": 640,
+    "minHeight": 420,
+    "titleBar": "hidden",
+    "background": "#fbfaf7"
+  },
+  "permissions": [],
+  "dev": {
+    "command": "vite --port {port} --strictPort",
+    "url": "http://localhost:{port}"
+  },
+  "build": {
+    "command": "vite build"
+  },
+  "description": "Notes as plain Markdown files, with search and one window per note."
+}

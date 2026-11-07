@@ -40,6 +40,14 @@ cd my-app && npm run dev
 
 The **Develop** menu has Reload, Restart Backend and Developer Tools. To pass flags to Chromium, put them after `--`: `pane dev -- --remote-debugging-port=9222`.
 
+### Example: Notes
+
+[`examples/notes`](examples/notes) is a real app on Pane, built with the React template. Notes are plain Markdown files in the app's data folder. It has search, autosave, deleted notes kept in a trash folder, and any note in its own window, with every window kept in sync through backend events.
+
+```sh
+cd examples/notes && npm install && npm run dev
+```
+
 ## An app
 
 ```
@@ -181,9 +189,10 @@ Set `PANE_HOME` and `PANE_LAUNCHERS_DIR` to install somewhere else, for example 
 npm test                  # unit tests, no window
 npm run smoke             # creates an app, opens it, and drives the real window
 npm run test:templates    # React and Svelte: npm install, Vite dev server, hot reload, build (needs network)
+npm run test:notes        # drives the Notes example like a user: write, search, second window, delete
 ```
 
-CI (`.github/workflows/ci.yml`) runs the unit and smoke tests on macOS, Windows and Linux, and the template tests on macOS.
+CI (`.github/workflows/ci.yml`) runs the unit and smoke tests on macOS, Windows and Linux, and the template and Notes tests on macOS.
 
 ## Not done yet
 
