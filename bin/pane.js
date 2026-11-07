@@ -32,6 +32,9 @@ Usage:
                                     Run an app as users will see it
   pane build [folder] [--out <dir>] Build the app and its installer in <folder>/release.
                                     Installers download Pane when a computer lacks it.
+  pane open <folder> <link|file> [--dev]
+                                    Hand a link (notes://...) or file to the app, as the
+                                    system would (--dev: the copy running under pane dev)
   pane install <folder|file.paneapp> [--open]
                                     Install an app on this computer
   pane uninstall <app-id> [--purge] Remove an app (--purge also deletes its data)
@@ -73,6 +76,7 @@ function main() {
     case 'run': return runApp(positional[0] || '.', { dev: false, extra });
     case 'build': return build(positional[0] || '.', flags);
     case 'install': return install(positional[0], flags);
+    case 'open': return openRequest(positional[0], positional[1], flags);
     case 'uninstall': return uninstall(positional[0], flags);
     case 'list': return list();
     case 'setup': return setup();
@@ -252,6 +256,20 @@ function install(source, flags) {
   console.log(`  launcher: ${record.launcher}`);
   if (flags.open) openLauncher(record.launcher);
   return 0;
+}
+
+// Starts the app with a link or file argument. If the app is already running,
+// that copy receives it (single instance), exactly like a click in the system.
+function openRequest(folder, target, flags) {
+  if (!folder || !target) throw new UsageError('pane open <folder> <link|file> [--dev]');
+  const dir = path.resolve(folder);
+  loadManifest(dir, { requireUi: false });
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  const arg = /^[a-z][a-z0-9+.-]*:/i.test(target) ? target : path.resolve(target);
+  const args = [path.join(RUNTIME_ROOT, 'main.js'), `--app=${dir}`, ...(flags.dev ? ['--dev'] : []), '--open-only', arg];
+  const res = spawnSync(electronBinary(RUNTIME_ROOT), args, { env, stdio: 'inherit' });
+  return res.status || 0;
 }
 
 function openLauncher(launcher) {

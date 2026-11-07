@@ -13,9 +13,25 @@
     "minWidth": 640,
     "minHeight": 420,
     "titleBar": "hidden",
-    "background": "#fbfaf7"
+    "background": {
+      "light": "#fbfaf7",
+      "dark": "#18191b"
+    }
   },
   "permissions": [],
+  "protocols": [
+    "pane-notes"
+  ],
+  "fileTypes": [
+    {
+      "name": "Markdown document",
+      "extensions": [
+        "md",
+        "markdown"
+      ],
+      "role": "editor"
+    }
+  ],
   "dev": {
     "command": "vite --port {port} --strictPort",
     "url": "http://localhost:{port}"

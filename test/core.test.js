@@ -61,7 +61,7 @@ test('manifest: a minimal app gets defaults', () => {
   assert.equal(m.uiDir, path.join(dir, 'ui'));
   assert.equal(m.start, 'index.html');
   assert.equal(m.backend, null);
-  assert.deepEqual({ ...m.window }, { width: 1024, height: 700, minWidth: 320, minHeight: 240, titleBar: 'default', background: '#ffffff' });
+  assert.deepEqual({ ...m.window }, { width: 1024, height: 700, minWidth: 320, minHeight: 240, titleBar: 'default', background: { light: '#ffffff', dark: '#1e1e1e' } });
   assert.deepEqual([...m.permissions], []);
 });
 
