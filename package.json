@@ -28,6 +28,7 @@
     "bin",
     "src",
     "sdk",
+    "templates",
     "types",
     "assets",
     "installer/windows/PaneSetup.cs",

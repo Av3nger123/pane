@@ -13,7 +13,7 @@ const {
 } = require('../core/paths');
 
 // What a runtime folder needs, besides Electron. Everything else stays behind.
-const RUNTIME_FILES = ['main.js', 'package.json', 'bin', 'src', 'sdk'];
+const RUNTIME_FILES = ['main.js', 'package.json', 'bin', 'src', 'sdk', 'templates'];
 
 // Copies this runtime into PANE_HOME/runtime/<version> and adds the `pane`
 // command at PANE_HOME/bin/pane. This is "installing Pane".

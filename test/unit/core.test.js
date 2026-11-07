@@ -121,6 +121,22 @@ test('every template produces a valid app, with and without a backend', () => {
   assert.throws(() => appFiles({ id: 'a', name: 'A', template: 'angular' }), /Unknown template/);
 });
 
+test('template engine: placeholders and sections', () => {
+  const { render } = require('../../src/cli/templates');
+  const vars = { backend: true, esm: false, 'name.html': 'A &amp; B', paneName: 'pane-runtime' };
+  assert.equal(render('<h1>{{name.html}}</h1>', vars), '<h1>A &amp; B</h1>');
+  assert.equal(render('a{{#backend}}B{{/backend}}c{{^backend}}D{{/backend}}', vars), 'aBc');
+  assert.equal(render('{{#esm}}import{{/esm}}{{^esm}}require{{/esm}}', vars), 'require');
+  assert.equal(render('{{unknown}} {single} {#if x}', vars), '{{unknown}} {single} {#if x}', 'leaves Svelte/JSX braces alone');
+  for (const template of TEMPLATES) {
+    for (const backend of [true, false]) {
+      for (const [file, text] of Object.entries(appFiles({ id: 'demo', name: 'Demo', template, backend, paneDependency: PANE_DEP }))) {
+        assert.ok(!/\{\{[#^/]?[\w.]+\}\}/.test(text), `${template}/${file} has an unfilled placeholder`);
+      }
+    }
+  }
+});
+
 test('manifest: dev and build commands', () => {
   const base = { id: 'a', name: 'A', ui: 'dist' };
   const write = (extra) => tmpApp({ 'pane.json': JSON.stringify({ ...base, ...extra }) });
