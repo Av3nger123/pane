@@ -1,0 +1,17 @@
+{
+  "name": "pane",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pane: one shared desktop runtime (Chromium, Node, Python bridge) for many small apps.",
+  "main": "main.js",
+  "bin": {
+    "pane": "bin/pane.js"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "smoke": "node test/smoke.js"
+  },
+  "devDependencies": {
+    "electron": "45.2.3"
+  }
+}
