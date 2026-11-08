@@ -202,15 +202,22 @@ test('pane build writes installers that know the Pane version and address', { sk
   const dir = tmpApp(appFiles({ id: 'demo', name: "Demo's App", template: 'vanilla', backend: true }));
   fs.writeFileSync(path.join(dir, 'icon.png'), defaultIconPng({ size: 64 }));
   const saved = process.env.PANE_DIST_URL;
+  const savedKeys = process.env.PANE_RELEASE_KEYS;
+  const releaseKey = require('../../src/core/release-signature').generateReleaseKey();
   process.env.PANE_DIST_URL = 'https://downloads.example.com/pane';
+  process.env.PANE_RELEASE_KEYS = JSON.stringify([releaseKey.publicPem]);
   try {
     const result = await buildInstaller(dir);
+    assert.ok(!result.warnings.some((w) => /release key/i.test(w)), result.warnings.join('\n'));
     assert.ok(!result.warnings.some((w) => /distribution address/.test(w)), result.warnings.join('\n'));
     const shPath = result.installers.find((f) => f.endsWith('install.sh'));
     const sh = fs.readFileSync(shPath, 'utf8');
     assert.ok(sh.includes(`PANE_VERSION='${RUNTIME_VERSION}'`));
     assert.ok(sh.includes('DIST_URL="${PANE_DIST_URL:-https://downloads.example.com/pane}"'));
     assert.ok(sh.includes("APP_NAME='Demo'\\''s App'"), 'quotes in the app name are escaped');
+    assert.ok(sh.includes(releaseKey.publicPem.trim()), "Pane's public key is in the script");
+    assert.ok(sh.includes('openssl dgst -sha256 -verify'), 'the script checks the signature');
+    assert.ok(!sh.includes('PANE_RELEASE_KEYS'), 'nothing at install time can add keys');
     execFileSync('sh', ['-n', shPath]); // valid shell syntax
     if (process.platform === 'darwin') {
       const dmg = result.installers.find((f) => f.endsWith('.dmg'));
@@ -219,5 +226,6 @@ test('pane build writes installers that know the Pane version and address', { sk
     assert.ok(!fs.readdirSync(result.outDir).some((f) => f.startsWith('pane-runtime')), 'Pane itself is never bundled');
   } finally {
     if (saved === undefined) delete process.env.PANE_DIST_URL; else process.env.PANE_DIST_URL = saved;
+    if (savedKeys === undefined) delete process.env.PANE_RELEASE_KEYS; else process.env.PANE_RELEASE_KEYS = savedKeys;
   }
 });

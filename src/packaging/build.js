@@ -11,6 +11,7 @@ const { runCommand, projectEnv } = require('../core/run');
 const { RUNTIME_VERSION } = require('../core/paths');
 const { fileName } = require('./launchers');
 const { distributionUrl } = require('./runtime');
+const { releaseKeys } = require('../core/release-signature');
 const { SKIP_IN_APP } = require('./apps');
 const { buildDmg } = require('./installers/dmg');
 const { writeSetupExe } = require('./installers/setup-exe');
@@ -38,6 +39,12 @@ async function buildInstaller(appDir, { out } = {}) {
       + 'Set "pane.distributionUrl" in Pane\'s package.json (or PANE_DIST_URL) and build again.');
   }
 
+  const keys = releaseKeys();
+  if (!keys.length) {
+    warnings.push('Pane has no release key, so this installer will refuse to download Pane on computers that lack it. '
+      + 'Add Pane\'s public key to "pane.releaseKeys" in Pane\'s package.json and build again.');
+  }
+
   const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'pane-build-'));
   try {
     // The app without dev tooling: copy it, then install production
@@ -61,7 +68,7 @@ async function buildInstaller(appDir, { out } = {}) {
     const pkg = path.join(outDir, pkgName);
     execFileSync('tar', ['-czf', pkg, '-C', stage, ...fs.readdirSync(stage)], { stdio: 'pipe' });
 
-    const opts = { name: manifest.name, pkgName, paneVersion: RUNTIME_VERSION, dist: dist || '' };
+    const opts = { name: manifest.name, pkgName, paneVersion: RUNTIME_VERSION, dist: dist || '', releaseKeys: keys };
     const installers = [];
 
     // macOS: a disk image with an "Install <App>" app (needs hdiutil).

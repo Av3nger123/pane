@@ -14,6 +14,7 @@ const os = require('os');
 const path = require('path');
 const { spawn, execFileSync, spawnSync } = require('child_process');
 const { RUNTIME_ROOT, RUNTIME_VERSION, electronBinary } = require('../../src/core/paths');
+const { generateReleaseKey } = require('../../src/core/release-signature');
 const { serveDir } = require('./lib/serve');
 const { waitForPage, connect, waitFor, randomPort, sleep } = require('./lib/cdp');
 
@@ -30,6 +31,7 @@ async function main() {
   const baseEnv = { ...process.env };
   delete baseEnv.ELECTRON_RUN_AS_NODE;
   let server = null;
+  const badServers = [];
   let installedId = null;
   const userEnv = { ...baseEnv, PANE_HOME: home, PANE_LAUNCHERS_DIR: launchers, PANE_INSTALLER_GUI: '0', PANE_INSTALLER_OPEN: '0' };
   try {
@@ -37,9 +39,33 @@ async function main() {
       execFileSync(process.execPath, [path.join(RUNTIME_ROOT, 'installer', 'windows', 'build.js')], { stdio: 'pipe' });
       ok('compiled PaneSetup.exe with the C# compiler that ships with Windows');
     }
-    execFileSync(process.execPath, [CLI, 'pack-runtime', '--out', path.join(work, 'dist')], { env: baseEnv, stdio: 'pipe' });
+    const releaseKey = generateReleaseKey();
+    baseEnv.PANE_RELEASE_KEYS = JSON.stringify([releaseKey.publicPem]);
+    execFileSync(process.execPath, [CLI, 'pack-runtime', '--out', path.join(work, 'dist')], {
+      env: { ...baseEnv, PANE_RELEASE_SIGNING_KEY: releaseKey.privatePem }, stdio: 'pipe',
+    });
     server = await serveDir(path.join(work, 'dist'));
-    ok(`packed Pane ${RUNTIME_VERSION} and serving it at ${server.url}`);
+    ok(`packed and signed Pane ${RUNTIME_VERSION}, serving it at ${server.url}`);
+
+    // Two bad copies of the distribution: one changed byte, and no signature.
+    const archiveName = `pane-runtime-${RUNTIME_VERSION}-${process.platform}-${process.arch}.tar.gz`;
+    const badDist = (name, change) => {
+      const dir = path.join(work, name, `v${RUNTIME_VERSION}`);
+      fs.mkdirSync(dir, { recursive: true });
+      for (const f of fs.readdirSync(path.join(work, 'dist', `v${RUNTIME_VERSION}`))) {
+        fs.copyFileSync(path.join(work, 'dist', `v${RUNTIME_VERSION}`, f), path.join(dir, f));
+      }
+      change(dir);
+      return path.join(work, name);
+    };
+    const tamperedDir = badDist('dist-tampered', (dir) => {
+      const file = path.join(dir, archiveName);
+      const bytes = fs.readFileSync(file);
+      bytes[bytes.length >> 1] ^= 0xff;
+      fs.writeFileSync(file, bytes);
+    });
+    const unsignedDir = badDist('dist-unsigned', (dir) => fs.rmSync(path.join(dir, `${archiveName}.sig`)));
+    badServers.push(await serveDir(tamperedDir), await serveDir(unsignedDir));
 
     const appDir = path.join(work, 'Field Notes');
     execFileSync(process.execPath, [CLI, 'create', appDir, '--name', 'Field Notes'], { env: baseEnv, stdio: 'pipe' });
@@ -53,7 +79,21 @@ async function main() {
     ok(`pane build made: ${files.join(', ')}`);
     installedId = manifest.id;
 
-    const runInstaller = MAC ? await macInstaller(release, work) : winInstaller(release);
+    const installer = MAC ? await macInstaller(release, work) : winInstaller(release);
+    const runInstaller = async (env) => {
+      const { code, output } = await installer(env);
+      assert.equal(code, 0, output);
+      return output;
+    };
+    const paneFile = path.join(home, 'bin', WIN ? 'pane.cmd' : 'pane');
+    for (const [bad, what] of [[badServers[0], 'a changed Pane download'], [badServers[1], 'a Pane download without a signature']]) {
+      const { code, output } = await installer({ ...userEnv, PANE_DIST_URL: bad.url });
+      assert.notEqual(code, 0, `the installer accepted ${what}:\n${output}`);
+      assert.match(output, /signature/i, output);
+      assert.ok(!fs.existsSync(paneFile), `nothing was installed from ${what}`);
+    }
+    ok('the installer refuses a changed Pane download, and one without a signature');
+
     const first = await runInstaller(userEnv);
     assert.match(first, /Downloading Pane|Pane is not installed|Installing Pane/i, first);
     assert.ok(fs.existsSync(path.join(home, 'bin', WIN ? 'pane.cmd' : 'pane')), 'Pane was installed');
@@ -93,6 +133,7 @@ async function main() {
       try { execFileSync(process.execPath, [CLI, 'uninstall', installedId], { env: userEnv, stdio: 'pipe' }); } catch { /* best effort */ }
     }
     if (server) server.close();
+    for (const s of badServers) s.close();
     if (MAC) spawnSync('hdiutil', ['detach', path.join(work, 'mnt'), '-force'], { stdio: 'ignore' });
     fs.rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
@@ -124,11 +165,7 @@ async function macInstaller(release, work) {
   assert.equal(app, 'Install Field Notes.app');
   const program = path.join(mnt, app, 'Contents', 'MacOS', 'install');
   ok(`the .dmg holds "${app}"`);
-  return async (env) => {
-    const { code, output } = await run(program, [], env);
-    assert.equal(code, 0, output);
-    return output;
-  };
+  return (env) => run(program, [], env);
 }
 
 async function checkMac({ launchers, manifest }) {
@@ -151,8 +188,7 @@ function winInstaller(release) {
   return async (env) => {
     const { code } = await run(path.join(release, exe), ['/quiet'], env);
     const log = fs.readFileSync(path.join(os.tmpdir(), 'pane-setup.log'), 'utf8');
-    assert.equal(code, 0, `Setup.exe failed:\n${log}`);
-    return log;
+    return { code, output: log };
   };
 }
 
