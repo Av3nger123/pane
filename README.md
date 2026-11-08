@@ -192,8 +192,9 @@ pane build my-app        # or: npm run build
 
 This writes `my-app/release/My App 0.1.0/`:
 - `my-app-0.1.0.paneapp`: the app, with production dependencies only.
-- `Install My App.command`: macOS and Linux.
-- `Install My App.cmd`: Windows (not yet tested).
+- `My App 0.1.0.dmg`: macOS, holding "Install My App" (built on a Mac).
+- `My App Setup 0.1.0.exe`: Windows (built on any OS once `PaneSetup.exe` is available).
+- `install.sh`: macOS and Linux, from a terminal.
 
 **Installers never contain Pane.** Each one records the Pane version the app was built with:
 1. If the computer has that version of Pane or newer, the installer installs only the app.
@@ -231,6 +232,46 @@ The release workflow (`.github/workflows/release.yml`) creates the GitHub releas
 
 **Release keys.** `pane keygen --release <file>` creates one. Put its public key in `"pane.releaseKeys"`, store the private key as the GitHub secret `PANE_RELEASE_SIGNING_KEY`, then delete the file. To replace a key, add the new public key next to the old one, release with the new key, and remove the old public key once apps built with it no longer need to download Pane. `PANE_DIST_URL` overrides the address, for example to test against a local server. The address must use https, except `localhost` while testing.
 
+### Signing your app
+
+Two kinds of signature, both optional:
+
+**Your app key (free).** It proves updates come from you. Create it once and keep it secret and backed up:
+
+```sh
+pane keygen ~/keys/my-apps.pem
+pane build my-app --key ~/keys/my-apps.pem     # in CI: put the key itself in PANE_SIGNING_KEY
+```
+
+The first install of an app id records its key. After that, users' computers only accept that id from the same key, so nobody else can ship an app with your id and take over its data. Without a key, `pane build` warns: an unsigned app can be replaced by anyone who reuses its id. Set `"publisher"` in `pane.json` to show a name next to the key.
+
+**Your certificates (paid, from Apple and Microsoft).** Without them, macOS Gatekeeper and Windows SmartScreen warn about your installer. `pane build --sign` signs the installers with them:
+
+| Setting | Meaning |
+|---|---|
+| `PANE_SIGN_IDENTITY` | macOS: `"Developer ID Application: Your Name (TEAMID)"` or its SHA-1 |
+| `PANE_SIGN_KEYCHAIN` | macOS, optional: the keychain that holds it |
+| `PANE_NOTARY_PROFILE` | macOS: a profile saved with `xcrun notarytool store-credentials`. Without it the .dmg is signed but not notarized, and macOS still blocks it |
+| `PANE_SIGN_PFX`, `PANE_SIGN_PFX_PASSWORD` | Windows: a .pfx certificate file |
+| `PANE_SIGN_CERT_SHA1` | Windows: a certificate in the Windows certificate store |
+| `PANE_SIGNTOOL_ARGS` | Windows: extra `signtool` arguments as a JSON list, e.g. for Azure Artifact Signing |
+| `PANE_SIGN_TIMESTAMP_URL` | Windows: the timestamp server (default DigiCert's) |
+
+The Windows installer is signed only when building on Windows (it needs `signtool`).
+
+### What users see
+
+`pane install` (and the installers' logs) show who signed the app and what it may use:
+
+```
+Installed Notes 1.2.0
+  launcher: ~/Applications/Pane Apps/Notes.app
+  publisher: Acme (key 3f9a 1c22 0b7e 91d4)
+  permissions: notifications
+```
+
+`pane list` shows the same publisher for each installed app.
+
 ## What installing does
 
 - **Pane** goes to `~/Library/Application Support/Pane/runtime/<version>`, and the `pane` command to `.../Pane/bin/pane`. That command runs on Pane's own Electron, so users don't need Node. Several versions can be installed side by side, and the default only moves forward.
@@ -246,7 +287,8 @@ Set `PANE_HOME` and `PANE_LAUNCHERS_DIR` to install somewhere else, for example 
 ```
 main.js, bin/pane.js   one-line entry points (Electron and the pane command)
 src/core/        no Electron: manifest, versions, safe paths, validation, links and files,
-                 the settings store, and the .ico, .reg and installer-payload formats
+                 the settings store, the .ico, .reg and installer-payload formats, and
+                 signatures (release-signature.js, app-signature.js, fuses.js, macho-signature.js)
 src/runtime/     Electron, one app per process
   main.js          starts the app
   ipc/             page APIs, one file per area, with the message names in ipc/channels.js
@@ -255,7 +297,8 @@ src/runtime/     Electron, one app per process
   windows.js, backend.js, protocol.js, menu.js, dev.js, preload.js
 src/cli/         the pane command: index.js dispatches to commands/<name>.js
 src/packaging/   installing Pane (runtime.js) and apps (apps.js), pane build (build.js),
-                 installers/ (install.sh, .dmg, Setup.exe), launchers/ (macOS, Windows, Linux)
+                 installers/ (install.sh, .dmg, Setup.exe), launchers/ (macOS, Windows, Linux),
+                 signing/ (codesign, signtool), publishers.js (which key owns each app id)
 sdk/backend/     the `pane` module app backends import
 templates/       vanilla, react, svelte and _shared, filled in by pane create
 installer/windows/  PaneSetup.cs, the Windows installer program
@@ -277,6 +320,7 @@ npm run smoke             # creates an app, opens it, and drives the real window
 npm run test:templates    # React and Svelte: npm install, Vite dev server, hot reload, build (needs network)
 npm run test:notes        # drives the Notes example like a user: write, search, second window, delete
 npm run test:installers   # the real .dmg (macOS) or Setup.exe (Windows) against a local copy of the distribution
+npm run test:signing      # pane build --sign with a throwaway certificate (macOS or Windows)
 ```
 
 CI (`.github/workflows/ci.yml`) runs the unit and smoke tests on macOS, Windows and Linux, the template and Notes tests on macOS, and the installer tests on macOS and Windows.
@@ -285,9 +329,10 @@ CI (`.github/workflows/ci.yml`) runs the unit and smoke tests on macOS, Windows 
 
 - **Windows** installs are tested end to end in CI on Windows Server, not yet by hand on a Windows 10 or 11 desktop. Task Manager lists Pane apps as "Electron", because they share Pane's `electron.exe`.
 - **Linux** launchers are written but not tested, and there's no Linux installer beyond `install.sh`.
-- **Installers aren't signed.** macOS Gatekeeper and Windows SmartScreen will warn until Phase 4.
+- **Real certificates are untested.** `pane build --sign` is tested in CI with throwaway certificates. Nobody has yet notarized with Apple or built SmartScreen reputation. "Install <App>" runs a shell script as its program, and Apple's notary service may reject that.
 - **No updater.** A launcher keeps the Chromium it was installed with until the app is installed again.
-- **Signing.** Launchers are signed ad hoc. Pane's own release key isn't created yet, so installers built today refuse to download Pane (`pane build` warns about this).
+- **Signing.** Launchers are signed ad hoc, so macOS may ask again for access to an app's saved secrets after Pane updates. Pane's own release key isn't created yet, so installers built today refuse to download Pane (`pane build` warns about this).
+- **Fuses** are turned off only in macOS launchers. Windows and Linux apps run the shared `electron.exe`, which the `pane` command needs as Node.
 - **Intel Macs and Linux on ARM** have no release build yet. The release workflow builds macOS arm64, Windows x64 and Linux x64.
 
 ## License
