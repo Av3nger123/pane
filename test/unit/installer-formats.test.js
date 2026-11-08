@@ -21,6 +21,36 @@ test('installer payload round-trips (what PaneSetup.cs reads)', () => {
   assert.throws(() => readPayload(stub), /No Pane installer payload/);
 });
 
+// The smallest PE32 header readPayload needs: DOS header, "PE\0\0", COFF
+// header, and an optional header whose data directory has the security entry.
+function fakePe32() {
+  const pe = Buffer.alloc(64 + 4 + 20 + 224);
+  pe.write('MZ', 0, 'ascii');
+  pe.writeUInt32LE(64, 0x3c);
+  pe.write('PE\0\0', 64, 'latin1');
+  pe.writeUInt16LE(224, 64 + 4 + 16); // SizeOfOptionalHeader
+  pe.writeUInt16LE(0x10b, 64 + 4 + 20); // PE32
+  return pe;
+}
+
+test('installer payload is found in front of a signature', () => {
+  const app = Buffer.from([9, 8, 7, 6, 5]);
+  const config = { name: 'Notes', package: 'notes.paneapp' };
+  const unsigned = attachPayload(fakePe32(), config, app);
+  // What signtool does: pad to 8 bytes, append the certificate table, and
+  // point the security directory entry (data directory index 4) at it.
+  const padding = Buffer.alloc(5);
+  const certificates = Buffer.alloc(200, 0xab);
+  const signed = Buffer.concat([unsigned, padding, certificates]);
+  const securityEntry = 64 + 4 + 20 + 96 + 4 * 8;
+  signed.writeUInt32LE(unsigned.length + padding.length, securityEntry);
+  signed.writeUInt32LE(certificates.length, securityEntry + 4);
+  const back = readPayload(signed);
+  assert.deepEqual(back.config, config);
+  assert.deepEqual(back.paneapp, app);
+  assert.deepEqual(readPayload(unsigned).paneapp, app);
+});
+
 test('.ico files', () => {
   const png = (n) => Buffer.alloc(n, 7);
   const ico = encodeIco([{ size: 256, png: png(300) }, { size: 16, png: png(40) }, { size: 32, png: png(90) }]);

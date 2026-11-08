@@ -18,8 +18,13 @@ Usage:
                                     Run an app, reloading when files change
   pane run [folder] [-- <electron flags>]
                                     Run an app as users will see it
-  pane build [folder] [--out <dir>] Build the app and its installer in <folder>/release.
+  pane build [folder] [--out <dir>] [--key <file>] [--sign]
+                                    Build the app and its installer in <folder>/release.
                                     Installers download Pane when a computer lacks it.
+                                    --key signs the app (default: PANE_SIGNING_KEY)
+                                    --sign signs the installers with your certificates
+                                    (PANE_SIGN_* settings, see README)
+  pane keygen <file>                Create a key for signing your apps
   pane open <folder> <link|file> [--dev]
                                     Hand a link (notes://...) or file to the app, as the
                                     system would (--dev: the copy running under pane dev)
@@ -28,11 +33,14 @@ Usage:
   pane uninstall <app-id> [--purge] Remove an app (--purge also deletes its data)
   pane list                         Show installed apps
   pane setup                        Install this Pane runtime on this computer
-  pane pack-runtime [--out <dir>]   Make this runtime's files for the distribution server
+  pane pack-runtime [--out <dir>] [--key <file>]
+                                    Make this runtime's signed files for the distribution server
+                                    (key: Pane's release key; default PANE_RELEASE_SIGNING_KEY)
+  pane keygen --release <file>      Create Pane's release signing key
   pane version
 `;
 
-const VALUE_FLAGS = new Set(['name', 'out', 'template']);
+const VALUE_FLAGS = new Set(['name', 'out', 'template', 'key', 'expect']);
 
 function parseArgs(argv) {
   const positional = [];
@@ -69,8 +77,9 @@ function main() {
     case 'open': return command('open').openRequest(positional[0], positional[1], flags);
     case 'uninstall': return command('uninstall').uninstall(positional[0], flags);
     case 'list': return command('list').list();
-    case 'setup': return command('setup').setup();
+    case 'setup': return command('setup').setup(flags);
     case 'pack-runtime': return command('pack-runtime').packRuntimeCommand(flags);
+    case 'keygen': return command('keygen').keygen(positional[0], flags);
     case 'version': case '--version': case '-v':
       console.log(RUNTIME_VERSION);
       return 0;

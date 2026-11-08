@@ -5,9 +5,13 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { loadManifest } = require('../core/manifest');
+const { loadManifest, ID_RE } = require('../core/manifest');
 const { satisfies } = require('../core/version');
 const { createLauncher, removeLauncher, fileName } = require('./launchers');
+const { verifyApp, AppSignatureError } = require('../core/app-signature');
+const {
+  checkPublisher, recordPublisher, forgetPublisher, publisherOf,
+} = require('./publishers');
 const { RUNTIME_ROOT, RUNTIME_VERSION, paneHome, appsDir, launchersDir } = require('../core/paths');
 
 const RECORD = '.pane-install.json';
@@ -40,12 +44,23 @@ function installApp(source) {
       err.code = 'PANE_TOO_OLD';
       throw err;
     }
+    // A signed app must match its signature, and an id stays with the key
+    // that first installed it. Both are checked before anything changes.
+    let signer;
+    try {
+      signer = verifyApp(appSource, incoming);
+    } catch (err) {
+      if (err instanceof AppSignatureError) err.message = `${incoming.name} was not installed. ${err.message}`;
+      throw err;
+    }
+    checkPublisher(incoming.id, signer);
     const dest = path.join(appsDir(), incoming.id);
     const tmp = `${dest}.partial`;
     fs.rmSync(tmp, { recursive: true, force: true });
     fs.mkdirSync(path.dirname(tmp), { recursive: true });
     fs.cpSync(appSource, tmp, {
       recursive: true,
+      verbatimSymlinks: true, // keep the links exactly as signed
       filter: (p) => !SKIP_IN_APP.has(path.basename(p)),
     });
     const previous = readRecord(dest);
@@ -63,8 +78,11 @@ function installApp(source) {
       fs.rmSync(dest, { recursive: true, force: true }); // no half-installed apps
       throw new Error(`Could not create the launcher for ${manifest.name}: ${err.message}`);
     }
+    recordPublisher(manifest.id, signer);
     const record = {
       id: manifest.id, name: manifest.name, version: manifest.version,
+      publisher: signer ? { name: signer.publisher, fingerprint: signer.fingerprint } : null,
+      permissions: [...manifest.permissions],
       runtime: RUNTIME_VERSION, runtimeDir: RUNTIME_ROOT, launcher,
       installedAt: new Date().toISOString(),
     };
@@ -82,15 +100,29 @@ function launcherPathFor(manifest) {
 }
 
 // Removes the app and its launcher. Its data stays unless purge is set.
+// With purge, also works for an app that was already uninstalled: its data and
+// publisher record may still be there.
 function uninstallApp(id, { purge = false } = {}) {
+  if (typeof id !== 'string' || !ID_RE.test(id)) throw new Error(`"${id}" is not an app id. "pane list" shows the installed apps.`);
   const dest = path.join(appsDir(), id);
   const record = readRecord(dest);
-  if (!record) throw new Error(`No installed app with the id "${id}".`);
+  const dataDir = path.join(paneHome(), 'data', id);
+  if (!record) {
+    if (purge && (fs.existsSync(dataDir) || publisherOf(id) !== undefined)) {
+      fs.rmSync(dataDir, { recursive: true, force: true });
+      forgetPublisher(id);
+      return { id, name: id, removedDataOnly: true };
+    }
+    throw new Error(`No installed app with the id "${id}".`);
+  }
   let manifest = null;
   try { manifest = loadManifest(dest, { requireUi: false }); } catch { /* remove what we can */ }
   removeLauncher(record.launcher, manifest);
   fs.rmSync(dest, { recursive: true, force: true });
-  if (purge) fs.rmSync(path.join(paneHome(), 'data', id), { recursive: true, force: true });
+  if (purge) {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+    forgetPublisher(id);
+  }
   return record;
 }
 

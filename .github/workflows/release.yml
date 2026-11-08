@@ -3,7 +3,7 @@ name: Release
 # Push a tag that matches package.json's version, e.g.:
 #   git tag v0.1.0 && git push origin v0.1.0
 # The release then holds everything app installers and developers download:
-#   pane-runtime-<v>-<os>-<arch>.tar.gz (+ .sha256)   Pane itself, per OS
+#   pane-runtime-<v>-<os>-<arch>.tar.gz (+ .sig, .sha256)   Pane itself, per OS
 #   pane-runtime-<v>.tgz                              the developer package (pane CLI)
 
 on:
@@ -44,7 +44,15 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: node bin/pane.js pack-runtime --out pane-dist
+      - name: Pack and sign Pane
+        shell: bash
+        env:
+          PANE_RELEASE_SIGNING_KEY: ${{ secrets.PANE_RELEASE_SIGNING_KEY }}
+        run: |
+          if [ -z "$PANE_RELEASE_SIGNING_KEY" ]; then
+            echo "Release signing key secret is not set (PANE_RELEASE_SIGNING_KEY)."; exit 1
+          fi
+          node bin/pane.js pack-runtime --out pane-dist
       - name: Attach to the release
         shell: bash
         env:

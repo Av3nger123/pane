@@ -6,11 +6,16 @@ const { buildInstaller } = require('../../packaging/build');
 const { size } = require('../util');
 
 async function build(folder, flags) {
-  const result = await buildInstaller(folder, { out: typeof flags.out === 'string' ? flags.out : undefined });
+  const result = await buildInstaller(folder, {
+    out: typeof flags.out === 'string' ? flags.out : undefined,
+    key: typeof flags.key === 'string' ? flags.key : undefined,
+    sign: Boolean(flags.sign),
+  });
   const rel = (p) => path.relative(process.cwd(), p) || p;
   console.log(`\nBuilt ${rel(result.outDir)}`);
   console.log(`  ${path.basename(result.package)}  ${size(result.package)}`);
   for (const f of result.installers) console.log(`  ${path.basename(f)}`);
+  if (result.publisher) console.log(`\nSigned by ${result.publisher.name || 'an unnamed publisher'} (key ${result.publisher.fingerprint})`);
   if (result.distributionUrl) {
     console.log(`\nOn computers without Pane ${result.paneVersion} or newer, the installer downloads it from ${result.distributionUrl}`);
   }

@@ -91,6 +91,15 @@ test('manifest: missing files and bad JSON', () => {
   assert.throws(() => loadManifest(tmpApp({ 'pane.json': '{"id":"a","name":"A","backend":"b.js"}', 'ui/index.html': '' })), /backend file "b.js" does not exist/);
 });
 
+test('manifest: publisher', () => {
+  const app = (publisher) => tmpApp({ 'pane.json': JSON.stringify({ id: 'a', name: 'A', publisher }), 'ui/index.html': '' });
+  assert.equal(loadManifest(app('Acme')).publisher, 'Acme');
+  assert.equal(loadManifest(app(undefined)).publisher, null);
+  assert.throws(() => loadManifest(app('')), /"publisher" must be text of 1–100 characters/);
+  assert.throws(() => loadManifest(app('x'.repeat(101))), /"publisher" must be text of 1–100 characters/);
+  assert.throws(() => loadManifest(app('Acme\nInc')), /"publisher"/);
+});
+
 const PANE_DEP = { name: 'pane-runtime', spec: '^0.1.0' };
 
 test('every template produces a valid app, with and without a backend', () => {
@@ -202,15 +211,22 @@ test('pane build writes installers that know the Pane version and address', { sk
   const dir = tmpApp(appFiles({ id: 'demo', name: "Demo's App", template: 'vanilla', backend: true }));
   fs.writeFileSync(path.join(dir, 'icon.png'), defaultIconPng({ size: 64 }));
   const saved = process.env.PANE_DIST_URL;
+  const savedKeys = process.env.PANE_RELEASE_KEYS;
+  const releaseKey = require('../../src/core/release-signature').generateReleaseKey();
   process.env.PANE_DIST_URL = 'https://downloads.example.com/pane';
+  process.env.PANE_RELEASE_KEYS = JSON.stringify([releaseKey.publicPem]);
   try {
     const result = await buildInstaller(dir);
+    assert.ok(!result.warnings.some((w) => /release key/i.test(w)), result.warnings.join('\n'));
     assert.ok(!result.warnings.some((w) => /distribution address/.test(w)), result.warnings.join('\n'));
     const shPath = result.installers.find((f) => f.endsWith('install.sh'));
     const sh = fs.readFileSync(shPath, 'utf8');
     assert.ok(sh.includes(`PANE_VERSION='${RUNTIME_VERSION}'`));
     assert.ok(sh.includes('DIST_URL="${PANE_DIST_URL:-https://downloads.example.com/pane}"'));
     assert.ok(sh.includes("APP_NAME='Demo'\\''s App'"), 'quotes in the app name are escaped');
+    assert.ok(sh.includes(releaseKey.publicPem.trim()), "Pane's public key is in the script");
+    assert.ok(sh.includes('openssl dgst -sha256 -verify'), 'the script checks the signature');
+    assert.ok(!sh.includes('PANE_RELEASE_KEYS'), 'nothing at install time can add keys');
     execFileSync('sh', ['-n', shPath]); // valid shell syntax
     if (process.platform === 'darwin') {
       const dmg = result.installers.find((f) => f.endsWith('.dmg'));
@@ -219,5 +235,33 @@ test('pane build writes installers that know the Pane version and address', { sk
     assert.ok(!fs.readdirSync(result.outDir).some((f) => f.startsWith('pane-runtime')), 'Pane itself is never bundled');
   } finally {
     if (saved === undefined) delete process.env.PANE_DIST_URL; else process.env.PANE_DIST_URL = saved;
+    if (savedKeys === undefined) delete process.env.PANE_RELEASE_KEYS; else process.env.PANE_RELEASE_KEYS = savedKeys;
   }
+});
+
+test('pane build signs the app with --key, and warns without one', { skip: process.platform === 'win32' }, async () => {
+  const { buildInstaller } = require('../../src/packaging/build');
+  const { generateAppKey, fingerprint, verifyApp, SIGNATURE_FILE } = require('../../src/core/app-signature');
+  const { execFileSync } = require('child_process');
+  const dir = tmpApp(appFiles({ id: 'signed-demo', name: 'Signed Demo', template: 'vanilla', backend: false }));
+  fs.writeFileSync(path.join(dir, 'icon.png'), defaultIconPng({ size: 64 }));
+  const key = generateAppKey();
+  const keyFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pane-key-')), 'app.pem');
+  fs.writeFileSync(keyFile, key.privatePem);
+  const unpack = (pkg) => {
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), 'pane-unpack-'));
+    execFileSync('tar', ['-xzf', pkg, '-C', out]);
+    return out;
+  };
+
+  const signed = await buildInstaller(dir, { key: keyFile });
+  assert.equal(signed.publisher.fingerprint, fingerprint(key.publicPem));
+  assert.ok(!signed.warnings.some((w) => /unsigned/.test(w)), signed.warnings.join('\n'));
+  const signer = verifyApp(unpack(signed.package), { id: 'signed-demo', version: '0.1.0' });
+  assert.equal(signer.fingerprint, fingerprint(key.publicPem));
+
+  const unsigned = await buildInstaller(dir);
+  assert.equal(unsigned.publisher, null);
+  assert.ok(unsigned.warnings.some((w) => /unsigned/.test(w)), unsigned.warnings.join('\n'));
+  assert.ok(!fs.existsSync(path.join(unpack(unsigned.package), SIGNATURE_FILE)));
 });

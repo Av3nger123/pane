@@ -4,6 +4,7 @@
 const path = require('path');
 const { spawn } = require('child_process');
 const { installApp, EXIT_NEEDS_NEWER_PANE } = require('../../packaging/apps');
+const { AppSignatureError } = require('../../core/app-signature');
 const { UsageError } = require('../util');
 
 function install(source, flags) {
@@ -12,12 +13,18 @@ function install(source, flags) {
   try {
     record = installApp(source);
   } catch (err) {
+    if (err.code === 'PUBLISHER_CHANGED' || err instanceof AppSignatureError) {
+      console.error(err.message);
+      return 1;
+    }
     if (err.code !== 'PANE_TOO_OLD') throw err;
     console.error(err.message);
     return EXIT_NEEDS_NEWER_PANE; // installers download a newer Pane and retry
   }
   console.log(`Installed ${record.name} ${record.version}`);
   console.log(`  launcher: ${record.launcher}`);
+  console.log(`  publisher: ${record.publisher ? `${record.publisher.name || 'unnamed'} (key ${record.publisher.fingerprint})` : 'unsigned'}`);
+  console.log(`  permissions: ${record.permissions.length ? record.permissions.join(', ') : 'none'}`);
   if (flags.open) openLauncher(record.launcher);
   return 0;
 }

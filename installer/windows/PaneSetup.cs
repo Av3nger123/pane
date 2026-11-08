@@ -6,8 +6,10 @@
 //   [app.paneapp][payload length: 8 bytes]["PANESET1"]
 //
 // It installs Pane first when the computer lacks the version the app was built
-// with (downloaded from Pane's distribution, checked against its SHA-256),
-// then installs the app with Pane's own command and opens it.
+// with (downloaded from Pane's distribution, and refused unless its .sig
+// verifies against one of Pane's public keys, which `pane build` puts in the
+// config as releaseKeys=<n>.<e>,...), then installs the app with Pane's own
+// command and opens it.
 //
 // Written for the C# 5 compiler that ships with Windows (csc.exe in
 // %WINDIR%\Microsoft.NET\Framework64\v4.0.30319), so no SDK is needed.
@@ -122,7 +124,7 @@ static class PaneSetup
                 File.WriteAllBytes(package, paneapp);
 
                 if (File.Exists(pane)) Status("Pane is already installed.");
-                else InstallPane(version, dist, work, name);
+                else InstallPane(version, dist, work, name, Get(config, "releaseKeys", ""));
 
                 Status("Installing " + name + "…");
                 string output;
@@ -130,7 +132,7 @@ static class PaneSetup
                 if (code == ExitNeedsNewerPane)
                 {
                     Status(name + " needs a newer Pane.");
-                    InstallPane(version, dist, work, name);
+                    InstallPane(version, dist, work, name, Get(config, "releaseKeys", ""));
                     code = RunPane(pane, package, out output);
                 }
                 if (code != 0) return Fail(name + " could not be installed." + Environment.NewLine + Environment.NewLine + output.Trim());
@@ -152,12 +154,15 @@ static class PaneSetup
         }
     }
 
-    // Downloads the Pane version the app was built with, checks it, installs it.
-    static void InstallPane(string version, string dist, string work, string name)
+    // Downloads the Pane version the app was built with, checks its signature,
+    // installs it.
+    static void InstallPane(string version, string dist, string work, string name, string releaseKeys)
     {
         if (version == "") throw new Exception("This installer does not say which Pane version it needs.");
         if (dist == "")
             throw new Exception(name + " needs Pane " + version + ", and this installer does not know where to download it.");
+        if (releaseKeys == "")
+            throw new Exception(name + "'s installer has no key to check Pane's download, so it will not download Pane.");
         bool local = dist.StartsWith("http://127.0.0.1", StringComparison.OrdinalIgnoreCase)
                   || dist.StartsWith("http://localhost", StringComparison.OrdinalIgnoreCase);
         if (!dist.StartsWith("https://", StringComparison.OrdinalIgnoreCase) && !local)
@@ -169,15 +174,21 @@ static class PaneSetup
         string archive = Path.Combine(work, file);
 
         Download(url, archive, "Downloading Pane " + version);
-        string sums;
-        using (var client = new WebClient()) sums = client.DownloadString(url + ".sha256");
-        string expected = sums.Trim().Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries)[0].ToLowerInvariant();
-        string actual;
+        byte[] signature;
+        try
+        {
+            using (var client = new WebClient()) signature = client.DownloadData(url + ".sig");
+        }
+        catch (WebException)
+        {
+            throw new Exception("Could not download Pane's signature from " + url + ".sig. Nothing was installed.");
+        }
+        byte[] hash;
         using (var sha = SHA256.Create())
         using (var stream = File.OpenRead(archive))
-            actual = BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
-        if (expected.Length != 64 || expected != actual)
-            throw new Exception("The Pane download is damaged or was changed (checksum mismatch). Nothing was installed.");
+            hash = sha.ComputeHash(stream);
+        if (!VerifyRelease(hash, signature, releaseKeys))
+            throw new Exception("The Pane download is not signed by Pane (signature check failed). Nothing was installed.");
 
         Status("Installing Pane " + version + "…");
         Marquee();
@@ -186,7 +197,9 @@ static class PaneSetup
         RunOrThrow(Path.Combine(Environment.SystemDirectory, "tar.exe"), Quote("-xzf") + " " + Quote(archive) + " -C " + Quote(unpack), null, "Unpacking Pane");
         var env = new Dictionary<string, string> { { "ELECTRON_RUN_AS_NODE", "1" } };
         string electron = Path.Combine(unpack, "node_modules", "electron", "dist", "electron.exe");
-        RunOrThrow(electron, Quote(Path.Combine(unpack, "bin", "pane.js")) + " setup", env, "Installing Pane");
+        // --expect: the signature proves the download is Pane's; this proves it
+        // is the version asked for.
+        RunOrThrow(electron, Quote(Path.Combine(unpack, "bin", "pane.js")) + " setup --expect " + Quote(version), env, "Installing Pane");
     }
 
     static void Download(string url, string target, string label)
@@ -267,18 +280,50 @@ static class PaneSetup
         return null;
     }
 
+    // keys: "<n>.<e>,<n>.<e>" (RSA modulus and exponent, base64url). True when
+    // any key verifies the RSA PKCS#1 v1.5 SHA-256 signature over the hash.
+    static bool VerifyRelease(byte[] sha256, byte[] signature, string keys)
+    {
+        foreach (string key in keys.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            string[] parts = key.Split('.');
+            if (parts.Length != 2) continue;
+            try
+            {
+                using (var rsa = new RSACryptoServiceProvider())
+                {
+                    rsa.ImportParameters(new RSAParameters { Modulus = Base64Url(parts[0]), Exponent = Base64Url(parts[1]) });
+                    if (rsa.VerifyHash(sha256, CryptoConfig.MapNameToOID("SHA256"), signature)) return true;
+                }
+            }
+            catch (CryptographicException e)
+            {
+                Log("release key check failed: " + e.Message);
+            }
+        }
+        return false;
+    }
+
+    static byte[] Base64Url(string s)
+    {
+        string b = s.Replace('-', '+').Replace('_', '/');
+        switch (b.Length % 4) { case 2: b += "=="; break; case 3: b += "="; break; }
+        return Convert.FromBase64String(b);
+    }
+
     static void ReadPayload(out Dictionary<string, string> config, out byte[] paneapp)
     {
         string self = Assembly.GetExecutingAssembly().Location;
         using (var f = File.OpenRead(self))
         {
-            if (f.Length < 16) throw new Exception("too small");
+            long end = PayloadEnd(f);
+            if (end < 16) throw new Exception("too small");
             var tail = new byte[16];
-            f.Seek(-16, SeekOrigin.End);
+            f.Seek(end - 16, SeekOrigin.Begin);
             ReadExactly(f, tail);
             for (int i = 0; i < 8; i++) if (tail[8 + i] != Magic[i]) throw new Exception("no app is attached");
             long size = BitConverter.ToInt64(tail, 0);
-            long start = f.Length - 16 - size;
+            long start = end - 16 - size;
             if (size < 4 || start < 0) throw new Exception("bad size");
             f.Seek(start, SeekOrigin.Begin);
             var lenBytes = new byte[4];
@@ -295,6 +340,50 @@ static class PaneSetup
                 if (eq > 0) config[line.Substring(0, eq)] = line.Substring(eq + 1);
             }
         }
+    }
+
+    // Where the attached payload ends. A signed installer has a certificate
+    // table after it (the PE security directory points at it), padded with
+    // up to 7 zero bytes; see src/core/installer-payload.js.
+    static long PayloadEnd(FileStream f)
+    {
+        long end = f.Length;
+        var head = new byte[64];
+        f.Seek(0, SeekOrigin.Begin);
+        if (f.Length >= 64 && f.Read(head, 0, 64) == 64 && head[0] == 'M' && head[1] == 'Z')
+        {
+            long pe = BitConverter.ToUInt32(head, 0x3c);
+            var buf = new byte[4 + 20 + 2];
+            if (pe + buf.Length <= f.Length)
+            {
+                f.Seek(pe, SeekOrigin.Begin);
+                ReadExactly(f, buf);
+                if (buf[0] == 'P' && buf[1] == 'E' && buf[2] == 0 && buf[3] == 0)
+                {
+                    long optional = pe + 24;
+                    int magic = BitConverter.ToUInt16(buf, 24);
+                    long security = optional + (magic == 0x20b ? 112 : 96) + 4 * 8;
+                    if (security + 8 <= f.Length)
+                    {
+                        var entry = new byte[8];
+                        f.Seek(security, SeekOrigin.Begin);
+                        ReadExactly(f, entry);
+                        long offset = BitConverter.ToUInt32(entry, 0);
+                        long size = BitConverter.ToUInt32(entry, 4);
+                        if (size > 0 && offset <= f.Length) end = offset;
+                    }
+                }
+            }
+        }
+        var one = new byte[1];
+        for (int i = 0; i < 7 && end > 0; i++)
+        {
+            f.Seek(end - 1, SeekOrigin.Begin);
+            ReadExactly(f, one);
+            if (one[0] != 0) break;
+            end--;
+        }
+        return end;
     }
 
     static void ReadExactly(Stream s, byte[] buffer)
