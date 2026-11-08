@@ -28,11 +28,14 @@ Usage:
   pane uninstall <app-id> [--purge] Remove an app (--purge also deletes its data)
   pane list                         Show installed apps
   pane setup                        Install this Pane runtime on this computer
-  pane pack-runtime [--out <dir>]   Make this runtime's files for the distribution server
+  pane pack-runtime [--out <dir>] [--key <file>]
+                                    Make this runtime's signed files for the distribution server
+                                    (key: Pane's release key; default PANE_RELEASE_SIGNING_KEY)
+  pane keygen --release <file>      Create Pane's release signing key
   pane version
 `;
 
-const VALUE_FLAGS = new Set(['name', 'out', 'template']);
+const VALUE_FLAGS = new Set(['name', 'out', 'template', 'key']);
 
 function parseArgs(argv) {
   const positional = [];
@@ -71,6 +74,7 @@ function main() {
     case 'list': return command('list').list();
     case 'setup': return command('setup').setup();
     case 'pack-runtime': return command('pack-runtime').packRuntimeCommand(flags);
+    case 'keygen': return command('keygen').keygen(positional[0], flags);
     case 'version': case '--version': case '-v':
       console.log(RUNTIME_VERSION);
       return 0;

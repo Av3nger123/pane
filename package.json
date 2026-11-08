@@ -9,7 +9,8 @@
     "url": "https://github.com/Av3nger123/pane"
   },
   "pane": {
-    "distributionUrl": "https://github.com/Av3nger123/pane/releases/download"
+    "distributionUrl": "https://github.com/Av3nger123/pane/releases/download",
+    "releaseKeys": []
   },
   "bin": {
     "pane": "bin/pane.js"

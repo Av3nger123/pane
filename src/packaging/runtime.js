@@ -8,6 +8,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { parse, compare } = require('../core/version');
+const { signRelease } = require('../core/release-signature');
 const {
   RUNTIME_ROOT, RUNTIME_VERSION, runtimesDir, binDir, electronBinary, electronPackageDir,
 } = require('../core/paths');
@@ -92,7 +93,11 @@ function installedRuntime() {
 // distribution server:
 //
 //   <distribution>/v<version>/pane-runtime-<version>-<os>-<arch>.tar.gz
+//   <distribution>/v<version>/pane-runtime-<version>-<os>-<arch>.tar.gz.sig
 //   <distribution>/v<version>/pane-runtime-<version>-<os>-<arch>.tar.gz.sha256
+//
+// Installers refuse an archive whose .sig does not match one of Pane's
+// public keys (src/core/release-signature.js). The .sha256 is for people.
 //
 // `pane pack-runtime` makes those files. The address comes from "pane.
 // distributionUrl" in Pane's package.json; PANE_DIST_URL overrides it.
@@ -113,8 +118,11 @@ const runtimeArchiveName = (version, platform = process.platform, arch = process
   `pane-runtime-${version}-${platform}-${arch}.tar.gz`;
 
 // Writes this runtime, for this OS and CPU, as files to upload to the
-// distribution server: <out>/v<version>/<archive> and <archive>.sha256.
-function packRuntime({ out }) {
+// distribution server: <out>/v<version>/<archive>, <archive>.sig and
+// <archive>.sha256. signingKey: Pane's private release key (PEM); defaults to
+// PANE_RELEASE_SIGNING_KEY.
+function packRuntime({ out, signingKey = process.env.PANE_RELEASE_SIGNING_KEY }) {
+  if (!signingKey) throw new Error("Pane's release signing key is missing. Set PANE_RELEASE_SIGNING_KEY or pass --key <file>.");
   const dir = path.join(path.resolve(out), `v${RUNTIME_VERSION}`);
   fs.mkdirSync(dir, { recursive: true });
   const archive = path.join(dir, runtimeArchiveName(RUNTIME_VERSION));
@@ -127,7 +135,9 @@ function packRuntime({ out }) {
   }
   const sha256 = crypto.createHash('sha256').update(fs.readFileSync(archive)).digest('hex');
   fs.writeFileSync(`${archive}.sha256`, `${sha256}  ${path.basename(archive)}\n`);
-  return { dir, archive, sha256 };
+  const signature = `${archive}.sig`;
+  fs.writeFileSync(signature, signRelease(fs.readFileSync(archive), signingKey));
+  return { dir, archive, sha256, signature };
 }
 
 function copyTree(from, to) {
