@@ -235,20 +235,51 @@ Other commands: `pane install <folder|.paneapp>`, `pane uninstall <id> [--purge]
 
 Set `PANE_HOME` and `PANE_LAUNCHERS_DIR` to install somewhere else, for example while testing.
 
+## Code layout
+
+```
+main.js, bin/pane.js   one-line entry points (Electron and the pane command)
+src/core/        no Electron: manifest, versions, safe paths, validation, links and files,
+                 the settings store, and the .ico, .reg and installer-payload formats
+src/runtime/     Electron, one app per process
+  main.js          starts the app
+  ipc/             page APIs, one file per area, with the message names in ipc/channels.js
+  security.js      locking pages down, permissions
+  open.js          links and files from the system
+  windows.js, backend.js, protocol.js, menu.js, dev.js, preload.js
+src/cli/         the pane command: index.js dispatches to commands/<name>.js
+src/packaging/   installing Pane (runtime.js) and apps (apps.js), pane build (build.js),
+                 installers/ (install.sh, .dmg, Setup.exe), launchers/ (macOS, Windows, Linux)
+sdk/backend/     the `pane` module app backends import
+templates/       vanilla, react, svelte and _shared, filled in by pane create
+installer/windows/  PaneSetup.cs, the Windows installer program
+types/           TypeScript types for pages and backends
+test/unit/, test/e2e/
+```
+
+`test/unit/architecture.test.js` enforces these rules:
+- `src/core` never loads Electron.
+- `src/runtime` never loads the CLI or packaging.
+- The CLI and packaging never load the Electron runtime.
+- The preload and the runtime use the same message names.
+
 ## Tests
 
 ```sh
-npm test                  # unit tests, no window
+npm test                  # unit tests (including the layout rules), no window
 npm run smoke             # creates an app, opens it, and drives the real window
 npm run test:templates    # React and Svelte: npm install, Vite dev server, hot reload, build (needs network)
 npm run test:notes        # drives the Notes example like a user: write, search, second window, delete
+npm run test:installers   # the real .dmg (macOS) or Setup.exe (Windows) against a local copy of the distribution
 ```
 
-CI (`.github/workflows/ci.yml`) runs the unit and smoke tests on macOS, Windows and Linux, and the template and Notes tests on macOS.
+CI (`.github/workflows/ci.yml`) runs the unit and smoke tests on macOS, Windows and Linux, the template and Notes tests on macOS, and the installer tests on macOS and Windows.
 
 ## Not done yet
 
-- **Windows and Linux** launchers and installers are written but not tested.
+- **Windows** installs are tested end to end in CI on Windows Server, not yet by hand on a Windows 10 or 11 desktop. Task Manager lists Pane apps as "Electron", because they share Pane's `electron.exe`.
+- **Linux** launchers are written but not tested, and there's no Linux installer beyond `install.sh`.
+- **Installers aren't signed.** macOS Gatekeeper and Windows SmartScreen will warn until Phase 4.
 - **No updater.** A launcher keeps the Chromium it was installed with until the app is installed again.
 - **Signing.** Launchers are signed ad hoc. Pane's downloads are checked against a checksum served from the same server, which proves integrity, not authenticity. Developer ID signing, notarization and signed releases come in phase 4.
 - **Intel Macs and Linux on ARM** have no release build yet. The release workflow builds macOS arm64, Windows x64 and Linux x64.
