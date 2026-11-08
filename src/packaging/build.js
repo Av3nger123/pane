@@ -12,6 +12,7 @@ const { RUNTIME_VERSION } = require('../core/paths');
 const { fileName } = require('./launchers');
 const { distributionUrl } = require('./runtime');
 const { releaseKeys } = require('../core/release-signature');
+const { signApp, fingerprint } = require('../core/app-signature');
 const { SKIP_IN_APP } = require('./apps');
 const { buildDmg } = require('./installers/dmg');
 const { writeSetupExe } = require('./installers/setup-exe');
@@ -23,7 +24,10 @@ const { writeInstallScript } = require('./installers/install-sh');
 //   <Name> Setup <version>.exe  Windows: PaneSetup.exe with the app attached
 //   install.sh                  macOS / Linux terminal install
 // Each gets Pane first when needed, then installs the app.
-async function buildInstaller(appDir, { out } = {}) {
+//
+// key: a file with the developer's Ed25519 key (pane keygen); defaults to
+// PANE_SIGNING_KEY (the key itself, for CI). Without one the app is unsigned.
+async function buildInstaller(appDir, { out, key } = {}) {
   const dir = path.resolve(appDir);
   const draft = loadManifest(dir, { requireUi: false });
   if (draft.build) await runCommand(draft.build.command, { cwd: dir, label: 'The build command' });
@@ -64,6 +68,16 @@ async function buildInstaller(appDir, { out } = {}) {
           + 'and may fail to load. Rebuild them with @electron/rebuild, or use a pure-JS alternative.');
       }
     }
+    // Signed last, so the signature covers the production dependencies.
+    const privatePem = key ? fs.readFileSync(path.resolve(key), 'utf8') : process.env.PANE_SIGNING_KEY;
+    let publisher = null;
+    if (privatePem) {
+      signApp(stage, { id: manifest.id, version: manifest.version, publisher: manifest.publisher }, privatePem);
+      publisher = { name: manifest.publisher, fingerprint: fingerprint(privatePem) };
+    } else {
+      warnings.push(`This app is unsigned. Anyone can publish an app with the id "${manifest.id}" and replace it on users' computers. `
+        + 'Create a key with "pane keygen <file>" and build with --key <file>.');
+    }
     const pkgName = `${manifest.id}-${manifest.version}.paneapp`;
     const pkg = path.join(outDir, pkgName);
     execFileSync('tar', ['-czf', pkg, '-C', stage, ...fs.readdirSync(stage)], { stdio: 'pipe' });
@@ -86,7 +100,7 @@ async function buildInstaller(appDir, { out } = {}) {
 
     // Terminal installs on macOS and Linux.
     installers.push(writeInstallScript({ outDir, opts }));
-    return { outDir, package: pkg, installers, paneVersion: RUNTIME_VERSION, distributionUrl: dist, warnings };
+    return { outDir, package: pkg, installers, paneVersion: RUNTIME_VERSION, distributionUrl: dist, publisher, warnings };
   } finally {
     fs.rmSync(stage, { recursive: true, force: true });
   }

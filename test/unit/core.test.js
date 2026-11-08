@@ -238,3 +238,30 @@ test('pane build writes installers that know the Pane version and address', { sk
     if (savedKeys === undefined) delete process.env.PANE_RELEASE_KEYS; else process.env.PANE_RELEASE_KEYS = savedKeys;
   }
 });
+
+test('pane build signs the app with --key, and warns without one', { skip: process.platform === 'win32' }, async () => {
+  const { buildInstaller } = require('../../src/packaging/build');
+  const { generateAppKey, fingerprint, verifyApp, SIGNATURE_FILE } = require('../../src/core/app-signature');
+  const { execFileSync } = require('child_process');
+  const dir = tmpApp(appFiles({ id: 'signed-demo', name: 'Signed Demo', template: 'vanilla', backend: false }));
+  fs.writeFileSync(path.join(dir, 'icon.png'), defaultIconPng({ size: 64 }));
+  const key = generateAppKey();
+  const keyFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pane-key-')), 'app.pem');
+  fs.writeFileSync(keyFile, key.privatePem);
+  const unpack = (pkg) => {
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), 'pane-unpack-'));
+    execFileSync('tar', ['-xzf', pkg, '-C', out]);
+    return out;
+  };
+
+  const signed = await buildInstaller(dir, { key: keyFile });
+  assert.equal(signed.publisher.fingerprint, fingerprint(key.publicPem));
+  assert.ok(!signed.warnings.some((w) => /unsigned/.test(w)), signed.warnings.join('\n'));
+  const signer = verifyApp(unpack(signed.package), { id: 'signed-demo', version: '0.1.0' });
+  assert.equal(signer.fingerprint, fingerprint(key.publicPem));
+
+  const unsigned = await buildInstaller(dir);
+  assert.equal(unsigned.publisher, null);
+  assert.ok(unsigned.warnings.some((w) => /unsigned/.test(w)), unsigned.warnings.join('\n'));
+  assert.ok(!fs.existsSync(path.join(unpack(unsigned.package), SIGNATURE_FILE)));
+});

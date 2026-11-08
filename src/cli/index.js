@@ -18,8 +18,11 @@ Usage:
                                     Run an app, reloading when files change
   pane run [folder] [-- <electron flags>]
                                     Run an app as users will see it
-  pane build [folder] [--out <dir>] Build the app and its installer in <folder>/release.
+  pane build [folder] [--out <dir>] [--key <file>]
+                                    Build the app and its installer in <folder>/release.
                                     Installers download Pane when a computer lacks it.
+                                    --key signs the app (default: PANE_SIGNING_KEY)
+  pane keygen <file>                Create a key for signing your apps
   pane open <folder> <link|file> [--dev]
                                     Hand a link (notes://...) or file to the app, as the
                                     system would (--dev: the copy running under pane dev)
