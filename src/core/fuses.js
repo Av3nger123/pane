@@ -52,7 +52,8 @@ function readFuses(file) {
   return found;
 }
 
-// changes: { <fuse index>: true | false }
+// changes: { <fuse index>: true | false }. Returns the file offsets it changed
+// (a signed binary then needs those pages re-hashed: macho-signature.js).
 function setFuses(file, changes) {
   const wires = readFuses(file);
   const writes = [];
@@ -65,13 +66,14 @@ function setFuses(file, changes) {
       if (wire[index] !== value) writes.push({ position: offset + index, value });
     }
   }
-  if (!writes.length) return;
+  if (!writes.length) return [];
   const fd = fs.openSync(file, 'r+');
   try {
     for (const { position, value } of writes) fs.writeSync(fd, Buffer.from(value, 'latin1'), 0, 1, position);
   } finally {
     fs.closeSync(fd);
   }
+  return writes.map((w) => w.position);
 }
 
 module.exports = { SENTINEL, FUSE, LAUNCHER_FUSES, readFuses, setFuses };

@@ -65,7 +65,7 @@ test('pack-runtime writes a signature that verifies', { skip: process.platform =
 const {
   SIGNATURE_FILE, generateAppKey, fingerprint, signApp, verifyApp,
 } = require('../../src/core/app-signature');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 
 const appKeyA = generateAppKey();
 const appKeyB = generateAppKey();
@@ -216,4 +216,29 @@ test('fuses: synthetic buffers', () => {
   fs.writeFileSync(none, 'nothing here');
   assert.throws(() => readFuses(none), /no Electron fuses/);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('fuses: the framework signature is repaired in place', { skip: process.platform !== 'darwin' }, () => {
+  const { electronDist } = require('../../src/core/paths');
+  const { repairPageHashes } = require('../../src/core/macho-signature');
+  const framework = path.join(electronDist(), 'Electron.app', 'Contents', 'Frameworks', 'Electron Framework.framework', 'Electron Framework');
+  const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pane-macho-')), 'Electron Framework');
+  fs.copyFileSync(framework, tmp);
+  const verify = () => spawnSync('codesign', ['--verify', '--strict', tmp]).status;
+  try {
+    assert.equal(verify(), 0, 'the copy starts out validly signed');
+    const original = fs.readFileSync(tmp);
+    const positions = setFuses(tmp, LAUNCHER_FUSES);
+    assert.ok(positions.length > 0);
+    assert.notEqual(verify(), 0, 'changed fuse bytes break the signature');
+    repairPageHashes(tmp, positions);
+    assert.equal(verify(), 0, 'the repaired signature is valid');
+    const changed = fs.readFileSync(tmp);
+    assert.equal(changed.length, original.length, 'nothing is rewritten or resized');
+    let differences = 0;
+    for (let i = 0; i < changed.length; i++) if (changed[i] !== original[i]) differences++;
+    assert.ok(differences <= positions.length + 32 * positions.length, `only fuse bytes and page hashes change (${differences} bytes)`);
+  } finally {
+    fs.rmSync(path.dirname(tmp), { recursive: true, force: true });
+  }
 });

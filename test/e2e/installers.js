@@ -15,6 +15,7 @@ const path = require('path');
 const { spawn, execFileSync, spawnSync } = require('child_process');
 const { RUNTIME_ROOT, RUNTIME_VERSION, electronBinary } = require('../../src/core/paths');
 const { generateReleaseKey } = require('../../src/core/release-signature');
+const { readFuses, FUSE } = require('../../src/core/fuses');
 const { serveDir } = require('./lib/serve');
 const { waitForPage, connect, waitFor, randomPort, sleep } = require('./lib/cdp');
 
@@ -104,7 +105,7 @@ async function main() {
     assert.match(pane('list'), /field-notes\s+Field Notes 0\.1\.0/);
 
     const appHome = path.join(home, 'apps', manifest.id);
-    if (MAC) await checkMac({ launchers, appHome, manifest, userEnv });
+    if (MAC) await checkMac({ launchers, appHome, manifest, userEnv, home });
     else await checkWindows({ launchers, appHome, manifest, userEnv, home });
 
     const second = await runInstaller(userEnv);
@@ -200,7 +201,7 @@ async function macInstaller(release, work) {
   return (env) => run(program, [], env);
 }
 
-async function checkMac({ launchers, manifest }) {
+async function checkMac({ launchers, manifest, home }) {
   const bundle = path.join(launchers, 'Field Notes.app');
   assert.ok(fs.existsSync(bundle));
   const plist = path.join(bundle, 'Contents', 'Info.plist');
@@ -209,6 +210,44 @@ async function checkMac({ launchers, manifest }) {
   assert.match(read('CFBundleURLTypes:0:CFBundleURLSchemes'), /field-notes/);
   assert.match(read('CFBundleDocumentTypes:0:CFBundleTypeExtensions'), /fnote/);
   ok('the launcher has the app\'s identity, link and file type');
+
+  const framework = (app) => path.join(app, 'Contents', 'Frameworks', 'Electron Framework.framework', 'Electron Framework');
+  const [launcherWire] = readFuses(framework(bundle));
+  for (const name of ['RunAsNode', 'EnableNodeOptionsEnvironmentVariable', 'EnableNodeCliInspectArguments']) {
+    assert.equal(launcherWire.wire[FUSE[name]], '0', `${name} is off in the launcher`);
+  }
+  const runtimeApp = path.join(home, 'runtime', RUNTIME_VERSION, 'node_modules', 'electron', 'dist', 'Electron.app');
+  assert.equal(readFuses(framework(runtimeApp))[0].wire[FUSE.RunAsNode], '1', "the pane command's Electron can still run as Node");
+  // The app and its renamed helpers are re-signed; the framework keeps
+  // Electron's own signature with its fuse pages re-hashed in place
+  // (test/unit/signing.test.js checks those hashes). --deep --strict is not
+  // used: Electron's framework ships without a resource list, so it fails
+  // that check even in a fresh download of Electron.
+  execFileSync('codesign', ['--verify', '--strict', bundle], { stdio: 'pipe' });
+  const helpers = path.join(bundle, 'Contents', 'Frameworks');
+  for (const h of fs.readdirSync(helpers).filter((f) => / Helper.*\.app$/.test(f))) {
+    execFileSync('codesign', ['--verify', '--strict', path.join(helpers, h)], { stdio: 'pipe' });
+  }
+  ok('the launcher cannot run as Node or be debugged, and its signature is valid');
+
+  // Start the launcher's program the way Finder does and talk to its window.
+  const port = randomPort();
+  const exe = path.join(bundle, 'Contents', 'MacOS', read('CFBundleExecutable'));
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  const child = spawn(exe, [`--remote-debugging-port=${port}`], { env, stdio: 'ignore' });
+  try {
+    const page = await waitForPage(port, (t) => t.url.startsWith('pane-app://'), 'the installed app');
+    const c = await connect(page.webSocketDebuggerUrl);
+    await waitFor(() => c.run('typeof pane === "object"'), 'the page');
+    assert.equal(await c.run('pane.app.name'), 'Field Notes');
+    assert.match(await c.run('pane.call("greet", "Mac")'), /^Hello, Mac\./);
+    c.close();
+    ok('the installed app starts from its launcher and its backend answers');
+  } finally {
+    child.kill();
+    await sleep(1000);
+  }
 }
 
 // ---- Windows: run "<App> Setup.exe /quiet" and check the registry ----------

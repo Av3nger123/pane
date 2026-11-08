@@ -8,6 +8,8 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { electronDist } = require('../../core/paths');
+const { setFuses, LAUNCHER_FUSES } = require('../../core/fuses');
+const { repairPageHashes } = require('../../core/macho-signature');
 const { fileName, execName } = require('./names');
 
 const LSREGISTER = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister';
@@ -86,8 +88,21 @@ function buildMacBundle({ tmp, manifest, appDir, runtimeRoot, home }) {
 
   writeBoot(path.join(resources, 'app'), { manifest, appDir, runtimeRoot, home });
 
-  // Ad-hoc signature: required on Apple silicon, and the Info.plist changed.
-  execFileSync('codesign', ['--force', '--deep', '--sign', '-', tmp], { stdio: 'pipe' });
+  // No running as plain Node, NODE_OPTIONS or --inspect: nobody can run their
+  // own code as this app (with its camera, microphone or file permissions).
+  // The pane command's Electron is a different copy and keeps them.
+  // Its signature is repaired in place, so the 200 MB file stays shared with
+  // Pane's copy instead of being rewritten by codesign.
+  const framework = path.join(frameworks, 'Electron Framework.framework', 'Electron Framework');
+  repairPageHashes(framework, setFuses(framework, LAUNCHER_FUSES));
+
+  // Ad-hoc signatures for what changed (renamed helpers, the app's Info.plist
+  // and files): required on Apple silicon. Not --deep: that would re-sign the
+  // unchanged frameworks and rewrite them in full.
+  for (const entry of fs.readdirSync(frameworks)) {
+    if (/ Helper.*\.app$/.test(entry)) execFileSync('codesign', ['--force', '--sign', '-', path.join(frameworks, entry)], { stdio: 'pipe' });
+  }
+  execFileSync('codesign', ['--force', '--sign', '-', tmp], { stdio: 'pipe' });
 }
 
 // The tiny Electron "app" inside the launcher: points at the app's files and
