@@ -1,0 +1,37 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Notes</title><link rel="stylesheet" href="shared.css">
+<style>
+body { display: grid; grid-template-columns: 240px 1fr; }
+aside { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+aside header { padding: 10px; display: flex; gap: 6px; } aside input { flex: 1; min-width: 0; }
+ul { list-style: none; margin: 0; padding: 0; overflow: auto; flex: 1; }
+li { padding: 8px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+li.on { background: var(--card); } li small { display: block; color: var(--muted); }
+main { display: flex; flex-direction: column; padding: 12px; gap: 8px; min-height: 0; }
+main input { font-size: 18px; font-weight: 600; } main textarea { flex: 1; resize: none; }
+</style></head><body>
+<aside><header><input id="q" placeholder="Search"><button id="add" class="primary">New</button></header><ul id="list"></ul></aside>
+<main><input id="title" placeholder="Title"><textarea id="body" placeholder="Write…"></textarea></main>
+<script>
+const KEY = 'bench-notes';
+let notes = JSON.parse(localStorage.getItem(KEY) || 'null') || Array.from({ length: 40 }, (_, i) => ({ id: i + 1, title: `Note ${i + 1}`, body: 'Lorem ipsum dolor sit amet. '.repeat(20), at: Date.now() - i * 3600e3 }));
+let current = notes[0].id;
+const $ = (id) => document.getElementById(id);
+const save = () => localStorage.setItem(KEY, JSON.stringify(notes));
+function render() {
+  const q = $('q').value.toLowerCase();
+  $('list').replaceChildren(...notes.filter((n) => (n.title + n.body).toLowerCase().includes(q)).sort((a, b) => b.at - a.at).map((n) => {
+    const li = document.createElement('li');
+    li.className = n.id === current ? 'on' : '';
+    li.innerHTML = `<b></b><small></small>`;
+    li.querySelector('b').textContent = n.title || 'Untitled';
+    li.querySelector('small').textContent = new Date(n.at).toLocaleString();
+    li.onclick = () => { current = n.id; load(); render(); };
+    return li;
+  }));
+}
+function load() { const n = notes.find((x) => x.id === current); $('title').value = n.title; $('body').value = n.body; }
+for (const id of ['title', 'body']) $(id).oninput = () => { const n = notes.find((x) => x.id === current); n[id] = $(id).value; n.at = Date.now(); save(); render(); };
+$('q').oninput = render;
+$('add').onclick = () => { const n = { id: Date.now(), title: '', body: '', at: Date.now() }; notes.push(n); current = n.id; save(); load(); render(); $('title').focus(); };
+load(); render();
+</script></body></html>

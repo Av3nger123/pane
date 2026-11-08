@@ -1,0 +1,31 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Markdown</title><link rel="stylesheet" href="shared.css">
+<style>
+body { display: grid; grid-template-columns: 1fr 1fr; } textarea { border: 0; border-right: 1px solid var(--line); border-radius: 0; resize: none; padding: 16px; font: 13px/1.6 ui-monospace, monospace; height: 100%; }
+article { padding: 16px 24px; overflow: auto; } article pre { background: var(--card); padding: 10px; border-radius: 6px; overflow: auto; }
+article blockquote { border-left: 3px solid var(--line); margin: 0; padding-left: 12px; color: var(--muted); }
+</style></head><body>
+<textarea id="src"></textarea><article id="out"></article>
+<script>
+const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+const inline = (s) => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/\*([^*]+)\*/g, '<i>$1</i>').replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+function md(text) {
+  const out = []; let list = false, code = null;
+  for (const line of text.split('\n')) {
+    if (line.startsWith('```')) { if (code === null) code = []; else { out.push(`<pre><code>${esc(code.join('\n'))}</code></pre>`); code = null; } continue; }
+    if (code !== null) { code.push(line); continue; }
+    const li = /^[-*] (.*)/.exec(line);
+    if (li && !list) { out.push('<ul>'); list = true; } else if (!li && list) { out.push('</ul>'); list = false; }
+    const h = /^(#{1,6}) (.*)/.exec(line);
+    if (h) out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`);
+    else if (li) out.push(`<li>${inline(li[1])}</li>`);
+    else if (line.startsWith('> ')) out.push(`<blockquote>${inline(line.slice(2))}</blockquote>`);
+    else if (line.trim()) out.push(`<p>${inline(line)}</p>`);
+  }
+  if (list) out.push('</ul>');
+  return out.join('\n');
+}
+const src = document.getElementById('src');
+src.value = localStorage.getItem('bench-md') || ('# Release notes\n\nPane keeps **one** copy of Chromium per computer.\n\n- Tiny apps\n- Quiet updates\n- Signed with your own key\n\n> Apps are files.\n\n```js\nawait pane.updates.check();\n```\n\n').repeat(30);
+const render = () => { document.getElementById('out').innerHTML = md(src.value); localStorage.setItem('bench-md', src.value); };
+src.oninput = render; render();
+</script></body></html>

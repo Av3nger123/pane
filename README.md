@@ -319,6 +319,18 @@ if (update.available) {
 - Pane refuses an update that is unsigned, signed with another key, not newer than the installed version, or for another app. The promise rejects with the reason.
 - Under `pane dev`, every call rejects.
 
+## Benchmarks
+
+The same five small apps built with Pane, Tauri and plain Electron, measured on one Mac (Apple M4, macOS 26). Medians of 3 runs. Full results are in [bench/RESULTS.md](bench/RESULTS.md); how they were measured, and what they leave out, is in [bench/README.md](bench/README.md).
+
+| | Memory, 1 app | Memory, 5 apps | Each app download | Shared, once per computer |
+|---|---|---|---|---|
+| Pane | 100 MB | 663 MB | 3 KB | 258 MB |
+| Tauri | 78 MB | 547 MB | ~1.4 MB | none (macOS WebKit) |
+| Electron | 96 MB | 643 MB | ~114 MB | none |
+
+What this shows today: **Pane saves download and disk, not memory.** A Pane app downloads in kilobytes instead of ~114 MB, and five Pane apps share one copy of Chromium instead of five. While running, each Pane app uses about what an Electron app uses, and Tauri uses less. Sharing memory between running Pane apps is the next step.
+
 ## What installing does
 
 - **Pane** goes to `~/Library/Application Support/Pane/runtime/<version>`, and the `pane` command to `.../Pane/bin/pane`. That command runs on Pane's own Electron, so users don't need Node. Several versions can be installed side by side, and the default only moves forward.

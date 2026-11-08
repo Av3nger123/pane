@@ -1,0 +1,22 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Timer</title><link rel="stylesheet" href="shared.css">
+<style>
+body { display: grid; place-items: center; } .wrap { text-align: center; }
+svg { width: 260px; height: 260px; } circle { fill: none; stroke-width: 10; } .track { stroke: var(--line); } .bar { stroke: var(--accent); stroke-linecap: round; transform: rotate(-90deg); transform-origin: center; }
+.time { font-size: 48px; font-variant-numeric: tabular-nums; font-weight: 600; margin: -170px 0 110px; }
+.row { display: flex; gap: 8px; justify-content: center; }
+</style></head><body><div class="wrap">
+<svg viewBox="0 0 260 260"><circle class="track" cx="130" cy="130" r="110"/><circle id="bar" class="bar" cx="130" cy="130" r="110"/></svg>
+<div class="time" id="time">25:00</div>
+<div class="row"><button id="go" class="primary">Start</button><button id="reset">Reset</button></div>
+</div><script>
+const TOTAL = 25 * 60, C = 2 * Math.PI * 110;
+const bar = document.getElementById('bar'); bar.style.strokeDasharray = C;
+let left = TOTAL, running = false, last = 0;
+function draw() { const m = Math.floor(left / 60), s = Math.floor(left % 60); document.getElementById('time').textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`; bar.style.strokeDashoffset = C * (1 - left / TOTAL); }
+function tick(t) { if (!running) return; if (last) left = Math.max(0, left - (t - last) / 1000); last = t; draw(); if (left > 0) requestAnimationFrame(tick); else running = false; }
+document.getElementById('go').onclick = (e) => { running = !running; e.target.textContent = running ? 'Pause' : 'Start'; last = 0; if (running) requestAnimationFrame(tick); };
+document.getElementById('reset').onclick = () => { left = TOTAL; draw(); };
+draw();
+// Benchmark: start running so the measurement includes an animating app.
+if (location.hash !== '#idle') document.getElementById('go').click();
+</script></body></html>
