@@ -36,6 +36,8 @@ Usage:
   pane list                         Show installed apps
   pane setup                        Install this Pane runtime on this computer
   pane self-update [--force]        Install a newer Pane if there is one (apps do this daily)
+  pane app-update check|download|install-file|apply <app-id> [file]
+                                    An app's own update (apps run this through pane.updates)
   pane pack-runtime [--out <dir>] [--key <file>]
                                     Make this runtime's signed files for the distribution server
                                     (key: Pane's release key; default PANE_RELEASE_SIGNING_KEY)
@@ -83,6 +85,7 @@ function main() {
     case 'setup': return command('setup').setup(flags);
     case 'self-update': return command('self-update').selfUpdateCommand(flags);
     case 'launcher-refresh': return command('launcher-refresh').launcherRefresh(positional[0], flags, extra);
+    case 'app-update': return command('app-update').appUpdate(positional, flags, extra);
     case 'pack-runtime': return command('pack-runtime').packRuntimeCommand(flags);
     case 'keygen': return command('keygen').keygen(positional[0], flags);
     case 'version': case '--version': case '-v':

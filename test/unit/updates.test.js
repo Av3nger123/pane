@@ -345,3 +345,96 @@ test('cleanupRuntimes removes only Panes nothing uses', () => withEnv({ PANE_HOM
   assert.ok(!fs.existsSync(r090));
   for (const kept of [r100, r110, r080]) assert.ok(fs.existsSync(kept), `${path.basename(kept)} is kept`);
 }));
+
+test('app updates: check, download, stage, apply, and every refusal', { skip: process.platform === 'win32' }, async () => {
+  const { generateAppKey, signApp } = require('../../src/core/app-signature');
+  const { RUNTIME_ROOT } = require('../../src/core/paths');
+  const { serveDir } = require('../e2e/lib/serve');
+  const K = generateAppKey();
+  const L = generateAppKey();
+  const sandbox = tmp('pane-app-update-');
+  const dist = path.join(sandbox, 'dist');
+  fs.mkdirSync(dist);
+  const server = await serveDir(dist);
+  let n = 0;
+  const makeApp = (version, { key, id = 'upd', updates = `${server.url}/latest.json` } = {}) => {
+    const dir = path.join(sandbox, `src-${++n}`);
+    fs.mkdirSync(path.join(dir, 'ui'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'ui', 'index.html'), `<p>${version}</p>`);
+    fs.writeFileSync(path.join(dir, 'pane.json'), JSON.stringify({ id, name: id === 'upd' ? 'Upd' : id, version, updates }));
+    if (key) signApp(dir, { id, version, publisher: 'Acme' }, key.privatePem);
+    return dir;
+  };
+  const pack = (dir, name) => {
+    const file = path.join(dist, name);
+    const macOnly = process.platform === 'darwin' ? ['--no-mac-metadata'] : [];
+    execFileSync('tar', [...macOnly, '-czf', file, '-C', dir, ...fs.readdirSync(dir)], { env: { ...process.env, COPYFILE_DISABLE: '1' } });
+    return file;
+  };
+  const announce = (version, name, extra = {}) => fs.writeFileSync(path.join(dist, 'latest.json'), JSON.stringify({ version, url: `${server.url}/${name}`, ...extra }));
+
+  try { await withEnv({ PANE_HOME: path.join(sandbox, 'home'), PANE_LAUNCHERS_DIR: path.join(sandbox, 'launchers'), PANE_LAUNCHER_SIGNING: 'adhoc' }, async () => {
+    const { installApp, uninstallApp } = require('../../src/packaging/apps');
+    const { checkAppUpdate, downloadAppUpdate, stageAppUpdate, applyPendingUpdate } = require('../../src/packaging/app-updates');
+    const record = (id = 'upd') => JSON.parse(fs.readFileSync(path.join(process.env.PANE_HOME, 'apps', id, '.pane-install.json'), 'utf8'));
+    try {
+      installApp(makeApp('0.1.0', { key: K }));
+      pack(makeApp('0.2.0', { key: K }), 'upd-0.2.0.paneapp');
+      announce('0.2.0', 'upd-0.2.0.paneapp', { notes: 'Faster.' });
+      assert.deepEqual(await checkAppUpdate('upd'), { available: true, version: '0.2.0', current: '0.1.0', notes: 'Faster.' });
+
+      const file = await downloadAppUpdate('upd');
+      assert.ok(file.startsWith(path.join(process.env.PANE_HOME, 'updates', 'upd')), file);
+      assert.deepEqual(await stageAppUpdate('upd', file), { version: '0.2.0' });
+      assert.equal(record().pendingUpdate, file);
+      assert.equal(record().version, '0.1.0', 'nothing changes under the running app');
+
+      applyPendingUpdate('upd', file);
+      assert.equal(record().version, '0.2.0');
+      assert.equal(record().pendingUpdate, undefined);
+      assert.ok(!fs.existsSync(file), 'the downloaded file is removed once installed');
+      assert.equal((await checkAppUpdate('upd')).available, false);
+
+      // Refusals: the installed version stays, nothing is pending.
+      const refuse = async (dir, name, pattern) => {
+        await assert.rejects(stageAppUpdate('upd', pack(dir, name)), pattern);
+        assert.equal(record().version, '0.2.0');
+        assert.equal(record().pendingUpdate, undefined);
+      };
+      await refuse(makeApp('0.3.0', { key: L }), 'other-key.paneapp', /not signed by its publisher/);
+      await refuse(makeApp('0.3.0'), 'unsigned.paneapp', /unsigned/);
+      await refuse(makeApp('0.1.5', { key: K }), 'older.paneapp', /not newer/);
+      await refuse(makeApp('0.3.0', { key: K, id: 'other' }), 'other-app.paneapp', /is for other, not Upd/);
+      const junk = path.join(dist, 'junk.paneapp');
+      fs.writeFileSync(junk, 'not an archive');
+      await assert.rejects(stageAppUpdate('upd', junk), /could not be unpacked/);
+      assert.throws(() => applyPendingUpdate('upd', pack(makeApp('0.3.0'), 'unsigned-apply.paneapp')), /unsigned/);
+      assert.equal(record().version, '0.2.0');
+
+      pack(makeApp('0.3.0', { key: K }), 'bad-hash.paneapp');
+      announce('0.3.0', 'bad-hash.paneapp', { sha256: '0'.repeat(64) });
+      await assert.rejects(downloadAppUpdate('upd'), /does not match/);
+      assert.deepEqual(fs.readdirSync(path.join(process.env.PANE_HOME, 'updates', 'upd')), [], 'a bad download is not kept');
+
+      // The app hands Pane a file it got some other way: Pane keeps its own copy.
+      const handed = pack(makeApp('0.3.0', { key: K }), 'handed.paneapp');
+      const out = execFileSync(process.execPath, [path.join(RUNTIME_ROOT, 'bin', 'pane.js'), 'app-update', 'install-file', 'upd', handed], { env: process.env, encoding: 'utf8' });
+      assert.deepEqual(JSON.parse(out.trim().split('\n').pop()), { result: { version: '0.3.0' } });
+      assert.ok(record().pendingUpdate.startsWith(path.join(process.env.PANE_HOME, 'updates', 'upd')), record().pendingUpdate);
+      assert.ok(fs.existsSync(record().pendingUpdate));
+      const failed = require('child_process').spawnSync(process.execPath, [path.join(RUNTIME_ROOT, 'bin', 'pane.js'), 'app-update', 'check', 'nope'], { env: process.env, encoding: 'utf8' });
+      assert.equal(failed.status, 1);
+      assert.match(JSON.parse(failed.stdout.trim().split('\n').pop()).error, /No installed app/);
+
+      // Apps installed unsigned cannot update themselves.
+      installApp(makeApp('0.1.0', { id: 'plain' }));
+      await assert.rejects(checkAppUpdate('plain'), /not signed, so it cannot update itself/);
+      installApp(makeApp('0.1.0', { id: 'quiet', key: K, updates: null }));
+      await assert.rejects(checkAppUpdate('quiet'), /has no update address/);
+    } finally {
+      for (const id of ['upd', 'plain', 'quiet']) { try { uninstallApp(id, { purge: true }); } catch { /* not installed */ } }
+    }
+  }); } finally {
+    server.close();
+  }
+});

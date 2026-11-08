@@ -81,4 +81,4 @@ async function downloadRuntime({ version, dist, keys, onProgress }) {
   }
 }
 
-module.exports = { downloadRuntime, installedReleaseKeys, RuntimeDownloadError };
+module.exports = { downloadRuntime, installedReleaseKeys, fetchTo, RuntimeDownloadError };

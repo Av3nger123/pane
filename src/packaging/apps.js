@@ -31,7 +31,11 @@ const EXIT_NEEDS_NEWER_PANE = 3;
 // is where the .paneapp sits relative to the script.
 // Installs an app folder or a .paneapp file. Launchers point at the runtime
 // running this command.
-function installApp(source) {
+//
+// requireSigner (app updates): the app must be signed with the key already
+// recorded for its id, so an update can never be unsigned, switch an
+// unsigned app to signed, or change publisher. expectId: the id it must have.
+function installApp(source, { requireSigner = false, expectId } = {}) {
   const src = path.resolve(source);
   let unpacked = null;
   let appSource = src;
@@ -55,6 +59,15 @@ function installApp(source) {
     } catch (err) {
       if (err instanceof AppSignatureError) err.message = `${incoming.name} was not installed. ${err.message}`;
       throw err;
+    }
+    if (expectId !== undefined && incoming.id !== expectId) {
+      throw new Error(`This update is for ${incoming.id}, not ${expectId}. Nothing was installed.`);
+    }
+    if (requireSigner) {
+      if (!signer) throw new Error(`${incoming.name}'s update is unsigned. Nothing was installed.`);
+      if (!publisherOf(incoming.id)) {
+        throw new Error(`${incoming.name} was installed unsigned, so it cannot switch to a signed copy through an update. Nothing was installed.`);
+      }
     }
     checkPublisher(incoming.id, signer);
     const dest = path.join(appsDir(), incoming.id);
