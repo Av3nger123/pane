@@ -140,6 +140,10 @@ function readRecord(dir) {
   try { return JSON.parse(fs.readFileSync(path.join(dir, RECORD), 'utf8')); } catch { return null; }
 }
 
+// Filled in by Phase 5 part 1d.
+function moveAppsOnto() { return []; }
+
 module.exports = {
+  moveAppsOnto,
   installApp, uninstallApp, listApps, launcherPathFor, SKIP_IN_APP, EXIT_NEEDS_NEWER_PANE,
 };

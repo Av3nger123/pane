@@ -123,3 +123,71 @@ test('downloadRuntime refuses a wrong key, a missing signature, a wrong version'
     servers.forEach((s) => s.close());
   }
 });
+
+// ---- Checking for a newer Pane --------------------------------------------
+
+test('update stamp: once a day', () => withEnv({ PANE_HOME: tmp('pane-home-') }, () => {
+  const { updateDue, markChecked } = require('../../src/core/update-state');
+  const t0 = Date.UTC(2026, 10, 8, 12);
+  const hour = 3600 * 1000;
+  assert.equal(updateDue({ now: t0 }), true);
+  markChecked({ now: t0 });
+  assert.equal(updateDue({ now: t0 + 23 * hour }), false);
+  assert.equal(updateDue({ now: t0 + 25 * hour }), true);
+}));
+
+test('update lock: one at a time, stale locks expire', () => withEnv({ PANE_HOME: tmp('pane-home-') }, () => {
+  const { takeLock } = require('../../src/core/update-state');
+  const release = takeLock('self-update');
+  assert.equal(typeof release, 'function');
+  assert.equal(takeLock('self-update'), null);
+  release();
+  const again = takeLock('self-update');
+  assert.equal(typeof again, 'function');
+  again();
+  const file = path.join(process.env.PANE_HOME, 'locks', 'self-update.lock');
+  fs.writeFileSync(file, '999999');
+  const takenOver = takeLock('self-update');
+  assert.equal(typeof takenOver, 'function', 'a lock held by a dead process is taken over');
+  takenOver();
+}));
+
+test('selfUpdate: up to date, newer, offline, garbage, older', { skip: process.platform === 'win32' }, async () => {
+  const { packRuntime } = require('../../src/packaging/runtime');
+  const { downloadRuntime } = require('../../src/packaging/runtime-download');
+  const { selfUpdate } = require('../../src/packaging/self-update');
+  const newer = await packedRuntime();
+  const dist = tmp('pane-dist-');
+  await withEnv({ PANE_RELEASE_KEYS: JSON.stringify([A.publicPem]) }, () => packRuntime({ out: dist, signingKey: A.privatePem, version: '0.1.0' }));
+  fs.cpSync(path.join(newer.out, 'v0.1.1'), path.join(dist, 'v0.1.1'), { recursive: true });
+  const latest = (text) => fs.writeFileSync(path.join(dist, 'pane-latest.json'), text);
+  const server = await serveDir(dist);
+  try {
+    await withEnv({ PANE_HOME: tmp('pane-home-'), PANE_DIST_URL: server.url, PANE_LATEST_URL: `${server.url}/pane-latest.json`, PANE_RELEASE_KEYS: undefined }, async () => {
+      const { installedRuntime } = require('../../src/packaging/runtime');
+      await downloadRuntime({ version: '0.1.0', dist: server.url, keys: [A.publicPem] });
+      assert.match(installedRuntime(), /0\.1\.0$/);
+
+      latest('{"version":"0.1.0"}');
+      assert.equal((await selfUpdate({ force: true })).status, 'up-to-date');
+      latest('{"version":"0.0.9"}');
+      assert.equal((await selfUpdate({ force: true })).status, 'up-to-date');
+      latest('nonsense');
+      assert.equal((await selfUpdate({ force: true })).status, 'failed');
+      await withEnv({ PANE_LATEST_URL: 'http://127.0.0.1:9/pane-latest.json' }, async () => {
+        assert.equal((await selfUpdate({ force: true })).status, 'failed');
+        assert.equal((await selfUpdate()).status, 'not-due', 'a failed check still waits a day');
+      });
+      assert.match(installedRuntime(), /0\.1\.0$/, 'nothing was installed');
+
+      latest('{"version":"0.1.1"}');
+      const result = await selfUpdate({ force: true });
+      assert.equal(result.status, 'updated', JSON.stringify(result));
+      assert.equal(result.version, '0.1.1');
+      assert.match(installedRuntime(), /0\.1\.1$/);
+      assert.match(fs.readFileSync(path.join(process.env.PANE_HOME, 'logs', 'update.log'), 'utf8'), /updated to Pane 0\.1\.1/);
+    });
+  } finally {
+    server.close();
+  }
+});

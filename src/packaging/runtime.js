@@ -173,7 +173,11 @@ function copyTree(from, to) {
   fs.cpSync(from, to, { recursive: true, verbatimSymlinks: true });
 }
 
+// Filled in by Phase 5 part 1f.
+function cleanupRuntimes() { return []; }
+
 module.exports = {
+  cleanupRuntimes,
   setupRuntime, stageRuntime, installedRuntime, packRuntime, distributionUrl, latestUrl, runtimeArchiveName, copyTree,
   runtimeVersionOf,
 };

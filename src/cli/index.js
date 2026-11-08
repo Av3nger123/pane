@@ -33,6 +33,7 @@ Usage:
   pane uninstall <app-id> [--purge] Remove an app (--purge also deletes its data)
   pane list                         Show installed apps
   pane setup                        Install this Pane runtime on this computer
+  pane self-update [--force]        Install a newer Pane if there is one (apps do this daily)
   pane pack-runtime [--out <dir>] [--key <file>]
                                     Make this runtime's signed files for the distribution server
                                     (key: Pane's release key; default PANE_RELEASE_SIGNING_KEY)
@@ -78,6 +79,7 @@ function main() {
     case 'uninstall': return command('uninstall').uninstall(positional[0], flags);
     case 'list': return command('list').list();
     case 'setup': return command('setup').setup(flags);
+    case 'self-update': return command('self-update').selfUpdateCommand(flags);
     case 'pack-runtime': return command('pack-runtime').packRuntimeCommand(flags);
     case 'keygen': return command('keygen').keygen(positional[0], flags);
     case 'version': case '--version': case '-v':
