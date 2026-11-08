@@ -11,6 +11,8 @@
 //   "backend": "backend/main.js",     optional Node file, runs on Pane's Node
 //   "icon": "icon.png",               optional, square PNG (512 px or more)
 //   "publisher": "Acme",              optional, shown at install next to the signing key
+//   "updates": "https://dl.example.com/hello/latest.json",
+//                                     optional, the app's update file (core/app-update.js)
 //   "window": { "width": 960, "height": 640, "minWidth": 400, "minHeight": 300,
 //               "titleBar": "default" | "hidden",
 //               "background": "#ffffff" or { "light": "#ffffff", "dark": "#1e1e1e" } },
@@ -31,6 +33,7 @@ const path = require('path');
 const { resolveInside } = require('./safe-path');
 const { isValidSpec, parse: parseVersion } = require('./version');
 const { checkProtocols, checkFileTypes } = require('./open-requests');
+const { isUpdateAddress } = require('./app-update');
 
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const PERMISSIONS = ['notifications', 'camera', 'microphone', 'clipboard', 'geolocation'];
@@ -140,6 +143,12 @@ function normalizeManifest(data, dir, { requireUi = true } = {}) {
     } else publisher = data.publisher;
   }
 
+  let updates = null;
+  if (data.updates !== undefined && data.updates !== null) {
+    if (!isUpdateAddress(data.updates)) errors.push('"updates" must be an https address of your update file, such as "https://example.com/hello/latest.json".');
+    else updates = data.updates;
+  }
+
   const protocols = checkProtocols(data.protocols, errors);
   const fileTypes = checkFileTypes(data.fileTypes, errors);
   const dev = command('dev', data.dev, errors, { needsUrl: true });
@@ -152,7 +161,7 @@ function normalizeManifest(data, dir, { requireUi = true } = {}) {
   return Object.freeze({
     dir, id, name, version, pane,
     description: str(data.description) || '',
-    publisher,
+    publisher, updates,
     ui, uiDir, start: start.replace(/\\/g, '/').replace(/^\/+/, ''),
     backend, icon,
     window: Object.freeze(win),

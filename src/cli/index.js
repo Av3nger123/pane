@@ -18,12 +18,14 @@ Usage:
                                     Run an app, reloading when files change
   pane run [folder] [-- <electron flags>]
                                     Run an app as users will see it
-  pane build [folder] [--out <dir>] [--key <file>] [--sign]
+  pane build [folder] [--out <dir>] [--key <file>] [--sign] [--update-url <address>]
                                     Build the app and its installer in <folder>/release.
                                     Installers download Pane when a computer lacks it.
                                     --key signs the app (default: PANE_SIGNING_KEY)
                                     --sign signs the installers with your certificates
                                     (PANE_SIGN_* settings, see README)
+                                    --update-url is where you upload the .paneapp; it goes
+                                    into latest.json (default: next to pane.json's "updates")
   pane keygen <file>                Create a key for signing your apps
   pane open <folder> <link|file> [--dev]
                                     Hand a link (notes://...) or file to the app, as the
@@ -41,7 +43,7 @@ Usage:
   pane version
 `;
 
-const VALUE_FLAGS = new Set(['name', 'out', 'template', 'key', 'expect', 'after']);
+const VALUE_FLAGS = new Set(['name', 'out', 'template', 'key', 'expect', 'after', 'update-url']);
 
 function parseArgs(argv) {
   const positional = [];
