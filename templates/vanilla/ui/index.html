@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'">
+  <title>{{name.html}}</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="titlebar"><span>{{name.html}}</span></header>
+  <main>
+    <h1>{{name.html}}</h1>
+    <p class="muted">This window is plain HTML, CSS and JavaScript.{{#backend}} Its backend is Node, running on the Node that comes with Pane.{{/backend}}</p>
+{{#backend}}
+    <form id="greet">
+      <input name="who" placeholder="Your name" autocomplete="off" aria-label="Your name">
+      <button>Ask the backend</button>
+    </form>
+    <p id="answer" class="answer" role="status"></p>
+    <p class="muted">Backend clock: <span id="clock">waiting</span></p>
+{{/backend}}
+    <button id="open" type="button" class="quiet">Open another window</button>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

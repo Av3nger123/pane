@@ -1,0 +1,93 @@
+'use strict';
+// The `pane` command: parses arguments and runs one of ./commands.
+
+// Installed Pane runs the CLI on its own Electron in Node mode, where .asar
+// archives otherwise pretend to be folders.
+if (process.versions.electron) process.noAsar = true;
+
+const { RUNTIME_VERSION } = require('../core/paths');
+const { TEMPLATES } = require('./templates');
+const { UsageError } = require('./util');
+
+const HELP = `Pane ${RUNTIME_VERSION}: one shared runtime for many desktop apps.
+
+Usage:
+  pane create <folder> [--template ${TEMPLATES.join('|')}] [--name "My App"] [--no-backend] [--no-install]
+                                    Start a new app (default template: vanilla)
+  pane dev [folder] [-- <electron flags>]
+                                    Run an app, reloading when files change
+  pane run [folder] [-- <electron flags>]
+                                    Run an app as users will see it
+  pane build [folder] [--out <dir>] Build the app and its installer in <folder>/release.
+                                    Installers download Pane when a computer lacks it.
+  pane open <folder> <link|file> [--dev]
+                                    Hand a link (notes://...) or file to the app, as the
+                                    system would (--dev: the copy running under pane dev)
+  pane install <folder|file.paneapp> [--open]
+                                    Install an app on this computer
+  pane uninstall <app-id> [--purge] Remove an app (--purge also deletes its data)
+  pane list                         Show installed apps
+  pane setup                        Install this Pane runtime on this computer
+  pane pack-runtime [--out <dir>]   Make this runtime's files for the distribution server
+  pane version
+`;
+
+const VALUE_FLAGS = new Set(['name', 'out', 'template']);
+
+function parseArgs(argv) {
+  const positional = [];
+  const flags = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a.startsWith('--')) {
+      const [key, inline] = a.slice(2).split(/=(.*)/s);
+      if (inline !== undefined) flags[key] = inline;
+      else if (VALUE_FLAGS.has(key) && argv[i + 1] !== undefined && !argv[i + 1].startsWith('--')) flags[key] = argv[++i];
+      else flags[key] = true;
+    } else {
+      positional.push(a);
+    }
+  }
+  return { positional, flags };
+}
+
+const command = (file) => require(`./commands/${file}`);
+
+function main() {
+  const argv = process.argv.slice(2);
+  // Anything after "--" goes to Electron/Chromium, e.g. --remote-debugging-port=9222
+  const split = argv.indexOf('--');
+  const [name, ...rest] = split >= 0 ? argv.slice(0, split) : argv;
+  const extra = split >= 0 ? argv.slice(split + 1) : [];
+  const { positional, flags } = parseArgs(rest);
+  switch (name) {
+    case 'create': return command('create').create(positional[0], flags);
+    case 'dev': return command('run').runApp(positional[0] || '.', { dev: true, extra });
+    case 'run': return command('run').runApp(positional[0] || '.', { dev: false, extra });
+    case 'build': return command('build').build(positional[0] || '.', flags);
+    case 'install': return command('install').install(positional[0], flags);
+    case 'open': return command('open').openRequest(positional[0], positional[1], flags);
+    case 'uninstall': return command('uninstall').uninstall(positional[0], flags);
+    case 'list': return command('list').list();
+    case 'setup': return command('setup').setup();
+    case 'pack-runtime': return command('pack-runtime').packRuntimeCommand(flags);
+    case 'version': case '--version': case '-v':
+      console.log(RUNTIME_VERSION);
+      return 0;
+    case undefined: case 'help': case '--help': case '-h':
+      process.stdout.write(HELP);
+      return 0;
+    default:
+      console.error(`Unknown command "${name}".\n`);
+      process.stdout.write(HELP);
+      return 1;
+  }
+}
+
+Promise.resolve()
+  .then(main)
+  .then((code) => { process.exitCode = code; })
+  .catch((err) => {
+    console.error(err instanceof UsageError ? `Usage: ${err.message}` : `pane: ${err.message}`);
+    process.exitCode = 1;
+  });
