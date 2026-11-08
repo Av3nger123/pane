@@ -197,8 +197,10 @@ This writes `my-app/release/My App 0.1.0/`:
 
 **Installers never contain Pane.** Each one records the Pane version the app was built with:
 1. If the computer has that version of Pane or newer, the installer installs only the app.
-2. If Pane is missing or older, the installer downloads that version from Pane's distribution server. It checks the SHA-256 checksum, installs Pane next to any older versions, then installs and opens the app.
-3. If the checksum doesn't match, the installer stops and installs nothing.
+2. If Pane is missing or older, the installer downloads that version from Pane's distribution server. It checks the download's signature against Pane's public keys, installs Pane next to any older versions, then installs and opens the app.
+3. If the signature is missing or doesn't match, the installer stops and installs nothing.
+
+The public keys come from `"pane.releaseKeys"` in Pane's `package.json` and are written into each installer when the app is built. Nothing on the user's computer can add a key, so a different download address (`PANE_DIST_URL`) can't change what gets installed.
 
 ### Where Pane is downloaded from: GitHub Releases
 
@@ -212,8 +214,10 @@ An installer for an app built with Pane 0.1.0 downloads:
 
 ```
 https://github.com/Av3nger123/pane/releases/download/v0.1.0/pane-runtime-0.1.0-darwin-arm64.tar.gz
-https://github.com/Av3nger123/pane/releases/download/v0.1.0/pane-runtime-0.1.0-darwin-arm64.tar.gz.sha256
+https://github.com/Av3nger123/pane/releases/download/v0.1.0/pane-runtime-0.1.0-darwin-arm64.tar.gz.sig
 ```
+
+The `.sig` is an RSA signature (PKCS#1 v1.5, SHA-256), because installers check it before Pane exists: `install.sh` with the system's `openssl`, `Setup.exe` with .NET Framework. A `.sha256` file is published too, for people checking by hand.
 
 To release a version, bump `version` in `package.json`, commit, then push a matching tag:
 
@@ -221,9 +225,11 @@ To release a version, bump `version` in `package.json`, commit, then push a matc
 git tag v0.1.0 && git push origin v0.1.0
 ```
 
-The release workflow (`.github/workflows/release.yml`) creates the GitHub release. It packs Pane on macOS, Windows and Linux and attaches each archive with its checksum. It also attaches the developer package (`pane-runtime-0.1.0.tgz`) that `npm install -g` uses.
+The release workflow (`.github/workflows/release.yml`) creates the GitHub release. It packs Pane on macOS, Windows and Linux and attaches each archive with its signature and checksum. It signs with the `PANE_RELEASE_SIGNING_KEY` secret and stops if the secret is missing. It also attaches the developer package (`pane-runtime-0.1.0.tgz`) that `npm install -g` uses.
 
-`pane pack-runtime --out pane-dist` makes the same files by hand. `PANE_DIST_URL` overrides the address, for example to test against a local server. The address must use https, except `localhost` while testing.
+`pane pack-runtime --out pane-dist --key <file>` makes the same files by hand.
+
+**Release keys.** `pane keygen --release <file>` creates one. Put its public key in `"pane.releaseKeys"`, store the private key as the GitHub secret `PANE_RELEASE_SIGNING_KEY`, then delete the file. To replace a key, add the new public key next to the old one, release with the new key, and remove the old public key once apps built with it no longer need to download Pane. `PANE_DIST_URL` overrides the address, for example to test against a local server. The address must use https, except `localhost` while testing.
 
 ## What installing does
 
@@ -281,7 +287,7 @@ CI (`.github/workflows/ci.yml`) runs the unit and smoke tests on macOS, Windows 
 - **Linux** launchers are written but not tested, and there's no Linux installer beyond `install.sh`.
 - **Installers aren't signed.** macOS Gatekeeper and Windows SmartScreen will warn until Phase 4.
 - **No updater.** A launcher keeps the Chromium it was installed with until the app is installed again.
-- **Signing.** Launchers are signed ad hoc. Pane's downloads are checked against a checksum served from the same server, which proves integrity, not authenticity. Developer ID signing, notarization and signed releases come in phase 4.
+- **Signing.** Launchers are signed ad hoc. Pane's own release key isn't created yet, so installers built today refuse to download Pane (`pane build` warns about this).
 - **Intel Macs and Linux on ARM** have no release build yet. The release workflow builds macOS arm64, Windows x64 and Linux x64.
 
 ## License
