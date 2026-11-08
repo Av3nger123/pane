@@ -10,7 +10,7 @@ const { execFileSync } = require('child_process');
 const { parse, compare } = require('../core/version');
 const { signRelease, releaseKeys } = require('../core/release-signature');
 const {
-  RUNTIME_ROOT, RUNTIME_VERSION, runtimesDir, binDir, electronBinary, electronPackageDir,
+  RUNTIME_ROOT, RUNTIME_VERSION, paneHome, runtimesDir, binDir, electronBinary, electronPackageDir,
 } = require('../core/paths');
 
 // What a runtime folder needs, besides Electron. Everything else stays behind.
@@ -197,6 +197,17 @@ function cleanupRuntimes() {
     } catch { /* not an installed app */ }
   }
   for (const entry of require('../core/running').runningApps()) if (entry.runtimeDir) keep.add(same(entry.runtimeDir));
+
+  // Downloads left behind (Windows may refuse to delete them at once).
+  const downloads = path.join(paneHome(), 'downloads');
+  let leftovers = [];
+  try { leftovers = fs.readdirSync(downloads); } catch { /* none */ }
+  for (const name of leftovers) {
+    const dir = path.join(downloads, name);
+    try {
+      if (Date.now() - fs.statSync(dir).mtimeMs > 3600e3) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+    } catch { /* still in use: next time */ }
+  }
 
   const removed = [];
   for (const name of names) {

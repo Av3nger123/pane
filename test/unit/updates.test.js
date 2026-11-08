@@ -341,7 +341,15 @@ test('cleanupRuntimes removes only Panes nothing uses', () => withEnv({ PANE_HOM
   fs.mkdirSync(oldPartial);
   fs.utimesSync(oldPartial, new Date(Date.now() - 2 * 3600e3), new Date(Date.now() - 2 * 3600e3));
 
+  const oldDownload = path.join(home, 'downloads', 'pane-0.1.1-old');
+  const newDownload = path.join(home, 'downloads', 'pane-0.1.2-now');
+  fs.mkdirSync(oldDownload, { recursive: true });
+  fs.mkdirSync(newDownload, { recursive: true });
+  fs.utimesSync(oldDownload, new Date(Date.now() - 2 * 3600e3), new Date(Date.now() - 2 * 3600e3));
+
   assert.deepEqual(cleanupRuntimes().sort(), ['0.0.9', '0.2.0.partial']);
+  assert.ok(!fs.existsSync(oldDownload), 'a download left behind is removed');
+  assert.ok(fs.existsSync(newDownload), 'a download in progress is kept');
   assert.ok(!fs.existsSync(r090));
   for (const kept of [r100, r110, r080]) assert.ok(fs.existsSync(kept), `${path.basename(kept)} is kept`);
 }));

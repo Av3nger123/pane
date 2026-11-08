@@ -77,7 +77,10 @@ async function downloadRuntime({ version, dist, keys, onProgress }) {
     }
     return { dir: path.join(runtimesDir(), version), version };
   } finally {
-    fs.rmSync(work, { recursive: true, force: true, maxRetries: 5 });
+    // Tidying up never fails an install: Windows can keep a file locked for
+    // a moment (antivirus, a process that just exited). cleanupRuntimes
+    // removes anything left behind later.
+    try { fs.rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch { /* left for later */ }
   }
 }
 
