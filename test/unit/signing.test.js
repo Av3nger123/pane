@@ -166,3 +166,54 @@ test('publishers: the first install decides, purge forgets', () => {
     if (saved === undefined) delete process.env.PANE_HOME; else process.env.PANE_HOME = saved;
   }
 });
+
+// ---- Electron fuses -------------------------------------------------------
+
+const { SENTINEL, FUSE, LAUNCHER_FUSES, readFuses, setFuses } = require('../../src/core/fuses');
+
+test('fuse positions match @electron/fuses', () => {
+  const { FuseV1Options } = require('@electron/fuses');
+  for (const [name, index] of Object.entries(FUSE)) assert.equal(index, FuseV1Options[name], name);
+});
+
+test('fuses: read and flip in place', { skip: process.platform !== 'darwin' }, () => {
+  const { electronDist } = require('../../src/core/paths');
+  const framework = path.join(electronDist(), 'Electron.app', 'Contents', 'Frameworks', 'Electron Framework.framework', 'Electron Framework');
+  const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pane-fuses-')), 'Electron Framework');
+  fs.copyFileSync(framework, tmp);
+  try {
+    const [before] = readFuses(tmp);
+    assert.ok(before.wire.length >= 8);
+    assert.equal(before.wire[FUSE.RunAsNode], '1');
+    const original = fs.readFileSync(tmp);
+    setFuses(tmp, LAUNCHER_FUSES);
+    const [after] = readFuses(tmp);
+    for (const i of [FUSE.RunAsNode, FUSE.EnableNodeOptionsEnvironmentVariable, FUSE.EnableNodeCliInspectArguments]) assert.equal(after.wire[i], '0');
+    for (let i = 0; i < before.wire.length; i++) if (!(i in LAUNCHER_FUSES)) assert.equal(after.wire[i], before.wire[i]);
+    const changed = fs.readFileSync(tmp);
+    assert.equal(changed.length, original.length);
+    let differences = 0;
+    for (let i = 0; i < changed.length; i++) if (changed[i] !== original[i]) differences++;
+    const wasOn = Object.keys(LAUNCHER_FUSES).filter((i) => before.wire[i] === '1').length;
+    assert.equal(differences, wasOn);
+  } finally {
+    fs.rmSync(path.dirname(tmp), { recursive: true, force: true });
+  }
+});
+
+test('fuses: synthetic buffers', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pane-fuses-'));
+  const file = (version, wire) => {
+    const f = path.join(dir, `bin-${version}-${wire}`);
+    fs.writeFileSync(f, Buffer.concat([Buffer.from('xx'), Buffer.from(SENTINEL), Buffer.from([version, wire.length]), Buffer.from(wire), Buffer.from('yy')]));
+    return f;
+  };
+  assert.deepEqual(readFuses(file(1, '1r0')).map((w) => w.wire), ['1r0']);
+  assert.throws(() => setFuses(file(1, '1r0'), { 1: false }), /removed/);
+  assert.throws(() => setFuses(file(1, '1r0'), { 5: false }), /no fuse/);
+  assert.throws(() => readFuses(file(2, '111')), /version/);
+  const none = path.join(dir, 'none');
+  fs.writeFileSync(none, 'nothing here');
+  assert.throws(() => readFuses(none), /no Electron fuses/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

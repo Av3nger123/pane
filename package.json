@@ -50,5 +50,8 @@
   },
   "dependencies": {
     "electron": "45.2.3"
+  },
+  "devDependencies": {
+    "@electron/fuses": "2.1.3"
   }
 }
