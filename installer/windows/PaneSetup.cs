@@ -314,13 +314,14 @@ static class PaneSetup
         string self = Assembly.GetExecutingAssembly().Location;
         using (var f = File.OpenRead(self))
         {
-            if (f.Length < 16) throw new Exception("too small");
+            long end = PayloadEnd(f);
+            if (end < 16) throw new Exception("too small");
             var tail = new byte[16];
-            f.Seek(-16, SeekOrigin.End);
+            f.Seek(end - 16, SeekOrigin.Begin);
             ReadExactly(f, tail);
             for (int i = 0; i < 8; i++) if (tail[8 + i] != Magic[i]) throw new Exception("no app is attached");
             long size = BitConverter.ToInt64(tail, 0);
-            long start = f.Length - 16 - size;
+            long start = end - 16 - size;
             if (size < 4 || start < 0) throw new Exception("bad size");
             f.Seek(start, SeekOrigin.Begin);
             var lenBytes = new byte[4];
@@ -337,6 +338,50 @@ static class PaneSetup
                 if (eq > 0) config[line.Substring(0, eq)] = line.Substring(eq + 1);
             }
         }
+    }
+
+    // Where the attached payload ends. A signed installer has a certificate
+    // table after it (the PE security directory points at it), padded with
+    // up to 7 zero bytes; see src/core/installer-payload.js.
+    static long PayloadEnd(FileStream f)
+    {
+        long end = f.Length;
+        var head = new byte[64];
+        f.Seek(0, SeekOrigin.Begin);
+        if (f.Length >= 64 && f.Read(head, 0, 64) == 64 && head[0] == 'M' && head[1] == 'Z')
+        {
+            long pe = BitConverter.ToUInt32(head, 0x3c);
+            var buf = new byte[4 + 20 + 2];
+            if (pe + buf.Length <= f.Length)
+            {
+                f.Seek(pe, SeekOrigin.Begin);
+                ReadExactly(f, buf);
+                if (buf[0] == 'P' && buf[1] == 'E' && buf[2] == 0 && buf[3] == 0)
+                {
+                    long optional = pe + 24;
+                    int magic = BitConverter.ToUInt16(buf, 24);
+                    long security = optional + (magic == 0x20b ? 112 : 96) + 4 * 8;
+                    if (security + 8 <= f.Length)
+                    {
+                        var entry = new byte[8];
+                        f.Seek(security, SeekOrigin.Begin);
+                        ReadExactly(f, entry);
+                        long offset = BitConverter.ToUInt32(entry, 0);
+                        long size = BitConverter.ToUInt32(entry, 4);
+                        if (size > 0 && offset <= f.Length) end = offset;
+                    }
+                }
+            }
+        }
+        var one = new byte[1];
+        for (int i = 0; i < 7 && end > 0; i++)
+        {
+            f.Seek(end - 1, SeekOrigin.Begin);
+            ReadExactly(f, one);
+            if (one[0] != 0) break;
+            end--;
+        }
+        return end;
     }
 
     static void ReadExactly(Stream s, byte[] buffer)
