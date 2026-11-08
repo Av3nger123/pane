@@ -14,6 +14,7 @@ const os = require('os');
 const path = require('path');
 const { spawn, spawnSync, execFileSync } = require('child_process');
 const { RUNTIME_ROOT } = require('../../src/core/paths');
+const { cmdArgs } = require('../../src/core/run');
 const { generateReleaseKey } = require('../../src/core/release-signature');
 const { serveDir } = require('./lib/serve');
 const { waitForPage, connect, waitFor, randomPort, sleep } = require('./lib/cdp');
@@ -240,7 +241,10 @@ async function main() {
   } finally {
     for (const child of children) { try { child.kill(); } catch { /* gone */ } }
     for (const id of installed) {
-      if (env) spawnSync(paneCmd, ['uninstall', id, '--purge'], { env, stdio: 'ignore', shell: WIN });
+      if (env) {
+        if (WIN) spawnSync(process.env.ComSpec || 'cmd.exe', cmdArgs(paneCmd, ['uninstall', id, '--purge']), { env, stdio: 'ignore', windowsVerbatimArguments: true });
+        else spawnSync(paneCmd, ['uninstall', id, '--purge'], { env, stdio: 'ignore' });
+      }
     }
     if (server) server.close();
     await sleep(1000);
@@ -250,7 +254,10 @@ async function main() {
 
 function run(file, args, env) {
   return new Promise((resolve, reject) => {
-    const child = spawn(file, args, { env, shell: WIN, stdio: ['ignore', 'pipe', 'pipe'] });
+    // .cmd files run through cmd.exe, quoted the way the runtime does it.
+    const child = WIN && /\.cmd$/i.test(file)
+      ? spawn(process.env.ComSpec || 'cmd.exe', cmdArgs(file, args), { env, windowsVerbatimArguments: true, stdio: ['ignore', 'pipe', 'pipe'] })
+      : spawn(file, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (d) => { stdout += d; });

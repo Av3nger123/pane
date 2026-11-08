@@ -88,4 +88,13 @@ async function waitForUrl(url, { child, timeout = 60000 } = {}) {
   }
 }
 
-module.exports = { projectEnv, runCommand, startCommand, stopCommand, freePort, waitForUrl };
+// Arguments for cmd.exe to run a .cmd file (Windows runs .cmd files only
+// through cmd). With /s, cmd strips the first and last quote of the line,
+// so the whole line gets one extra pair, as Node's own shell option does.
+// Arguments are quoted, so spaces are fine; they must not contain quotes.
+function cmdArgs(file, args) {
+  const line = [file, ...args].map((a) => `"${String(a)}"`).join(' ');
+  return ['/d', '/s', '/c', `"${line}"`];
+}
+
+module.exports = { cmdArgs, projectEnv, runCommand, startCommand, stopCommand, freePort, waitForUrl };

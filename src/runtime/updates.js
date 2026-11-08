@@ -16,6 +16,7 @@ const { spawn } = require('child_process');
 const { RUNTIME_ROOT, appsDir, samePath } = require('../core/paths');
 const { updateDue, logUpdate, REOPENED_FLAG } = require('../core/update-state');
 const { markRunning, clearRunning } = require('../core/running');
+const { cmdArgs } = require('../core/run');
 
 const CHECK_DELAY_MS = 10000;
 
@@ -28,7 +29,7 @@ function spawnPane(home, args, opts) {
   delete env.ELECTRON_RUN_AS_NODE; // the pane script sets its own
   const all = { env, windowsHide: true, ...opts };
   return process.platform === 'win32'
-    ? spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `"${path.join(home, 'bin', 'pane.cmd')}" ${args.map((a) => `"${a}"`).join(' ')}`], { ...all, windowsVerbatimArguments: true })
+    ? spawn(process.env.ComSpec || 'cmd.exe', cmdArgs(path.join(home, 'bin', 'pane.cmd'), args), { ...all, windowsVerbatimArguments: true })
     : spawn(path.join(home, 'bin', 'pane'), args, all);
 }
 

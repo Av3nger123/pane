@@ -473,3 +473,9 @@ test('app updates: check, download, stage, apply, and every refusal', { skip: pr
     server.close();
   }
 });
+
+test('cmd.exe lines for .cmd files survive /s and spaces', () => {
+  const { cmdArgs } = require('../../src/core/run');
+  assert.deepEqual(cmdArgs('C:\\Users\\A B\\Pane\\bin\\pane.cmd', ['launcher-refresh', 'notes', '--', 'C:\\My Notes\\a.md']),
+    ['/d', '/s', '/c', '""C:\\Users\\A B\\Pane\\bin\\pane.cmd" "launcher-refresh" "notes" "--" "C:\\My Notes\\a.md""']);
+});
