@@ -9,6 +9,7 @@ async function build(folder, flags) {
   const result = await buildInstaller(folder, {
     out: typeof flags.out === 'string' ? flags.out : undefined,
     key: typeof flags.key === 'string' ? flags.key : undefined,
+    sign: Boolean(flags.sign),
   });
   const rel = (p) => path.relative(process.cwd(), p) || p;
   console.log(`\nBuilt ${rel(result.outDir)}`);

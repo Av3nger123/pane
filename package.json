@@ -46,7 +46,8 @@
     "smoke": "node test/e2e/smoke.js",
     "test:templates": "node test/e2e/templates.js",
     "test:notes": "node test/e2e/notes.js",
-    "test:installers": "node test/e2e/installers.js"
+    "test:installers": "node test/e2e/installers.js",
+    "test:signing": "node test/e2e/signing.js"
   },
   "dependencies": {
     "electron": "45.2.3"

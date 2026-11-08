@@ -27,7 +27,10 @@ const { writeInstallScript } = require('./installers/install-sh');
 //
 // key: a file with the developer's Ed25519 key (pane keygen); defaults to
 // PANE_SIGNING_KEY (the key itself, for CI). Without one the app is unsigned.
-async function buildInstaller(appDir, { out, key } = {}) {
+//
+// sign: also sign the installers with the developer's certificates
+// (signing/windows.js, signing/macos.js).
+async function buildInstaller(appDir, { out, key, sign = false } = {}) {
   const dir = path.resolve(appDir);
   const draft = loadManifest(dir, { requireUi: false });
   if (draft.build) await runCommand(draft.build.command, { cwd: dir, label: 'The build command' });
@@ -92,6 +95,10 @@ async function buildInstaller(appDir, { out, key } = {}) {
     // Windows: PaneSetup.exe with the app attached (from any OS, once the
     // compiled PaneSetup.exe is available).
     const exe = writeSetupExe({ manifest, pkg, pkgName, outDir, dist, releaseKeys: keys });
+    if (exe && sign) {
+      if (process.platform === 'win32') require('./signing/windows').signWindows(exe);
+      else warnings.push('The Windows installer is not signed: signing it needs Windows (signtool).');
+    }
     if (exe) installers.push(exe);
     else {
       warnings.push('No Windows installer (.exe): it needs the compiled PaneSetup.exe, which Pane releases include. '
