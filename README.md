@@ -81,7 +81,7 @@ my-app/
 | Field | Meaning |
 |---|---|
 | `id` | Lowercase letters, digits and dashes. Identifies the app and its data. |
-| `pane` | Pane versions the app works with: `">=0.1.0"`, `"^1.2.0"`. |
+| `pane` | Pane versions the app works with: `">=0.1.0"`, `"^1.2.0"`, or `"=0.1.0"` to stay on exactly that Pane (see [Updates](#updates)). |
 | `ui`, `start` | The folder Pane serves, and the first page in it. |
 | `backend` | Optional. A Node file (CommonJS or ES module) that runs in its own process. |
 | `window.background` | Shown while pages load, and behind the window controls. One colour, or `{ "light": "#ffffff", "dark": "#1e1e1e" }`, which follows the system theme. |
@@ -91,6 +91,7 @@ my-app/
 | `fileTypes` | Optional. Files the app can open ("Open with"), for example `[{ "name": "Markdown", "extensions": ["md"], "role": "editor" }]`. |
 | `dev` | Optional. `pane dev` runs `command` and loads `url`, which must be on `localhost`. `{port}` is a free port that Pane picks. Leave out `command` if you start the server yourself. |
 | `build` | Optional. `pane build` runs it first. |
+| `updates` | Optional. The https address of the app's update file, `latest.json` (see [Updates](#updates)). |
 
 ### In the page: `window.pane`
 
@@ -274,6 +275,50 @@ Installed Notes 1.2.0
 
 `pane list` shows the same publisher for each installed app.
 
+## Updates
+
+### Pane updates itself, quietly
+
+When an installed app opens, Pane checks for a newer version of itself, at most once a day per computer and never under `pane dev`. If there is one, Pane downloads it in the background, checks its signature, and installs it next to the old one. Users see nothing: no dialog, no banner, no restart.
+- A running app is never closed or reloaded. It moves onto the new Pane the next time it opens.
+- Apps that aren't running move straight away.
+- An old Pane is removed once no installed or running app uses it.
+- Every outcome goes to `.../Pane/logs/update.log`, and nowhere else.
+
+**Pane's promise:** a new Pane keeps running apps built for an older one. Every app moves to the newest Pane its `"pane"` range allows. To stay on one Pane, name it exactly: `"pane": "=0.1.0"`.
+
+On macOS, Pane signs launchers with a certificate of the computer's own ("Pane Local Signing"), made on first use and kept in a keychain of Pane's own (`.../Pane/signing`). The signature then stays the same when a launcher moves to a new Pane, so apps keep access to their `pane.secrets` without asking for the password. That keychain is added to the user's keychain search list. The login keychain is never changed. Risk accepted: a program already running as the user could read that keychain's password file and sign as Pane, but such a program could already change the apps in `.../Pane/apps`.
+
+### Apps update themselves
+
+An app decides when to look for updates and shows its own screens. Pane checks, downloads and verifies the update, and installs it the next time the app starts. **An update is installed only if it is signed with the key the app was installed with**, so only apps built with `--key` can update themselves.
+
+1. Add your update file's address to `pane.json`: `"updates": "https://dl.example.com/my-app/latest.json"`.
+2. Build each version with your key. `pane build` also writes `latest.json`, pointing at the `.paneapp` next to it (or pass `--update-url <folder address>` if you upload it somewhere else).
+3. Upload the `.paneapp` first, then `latest.json`.
+
+```json
+{ "version": "0.2.0", "url": "https://dl.example.com/my-app/my-app-0.2.0.paneapp",
+  "notes": "Faster search.", "pane": ">=0.1.0", "sha256": "…" }
+```
+
+In a page (or the backend, through `pane.updates` there):
+
+```js
+const update = await pane.updates.check();        // { available, version, notes }
+if (update.available) {
+  pane.updates.onProgress((fraction) => showProgress(fraction));
+  await pane.updates.download();                  // verified, waits for a restart
+  if (await askUser(`Restart to update to ${update.version}?`)) pane.updates.restartToUpdate();
+}
+```
+
+- `installFile(path)` uses a `.paneapp` the app got some other way.
+- `onReady(fn)` tells every window that an update is waiting.
+- An update that needs a newer Pane gets it first.
+- Pane refuses an update that is unsigned, signed with another key, not newer than the installed version, or for another app. The promise rejects with the reason.
+- Under `pane dev`, every call rejects.
+
 ## What installing does
 
 - **Pane** goes to `~/Library/Application Support/Pane/runtime/<version>`, and the `pane` command to `.../Pane/bin/pane`. That command runs on Pane's own Electron, so users don't need Node. Several versions can be installed side by side, and the default only moves forward.
@@ -296,11 +341,15 @@ src/runtime/     Electron, one app per process
   ipc/             page APIs, one file per area, with the message names in ipc/channels.js
   security.js      locking pages down, permissions
   open.js          links and files from the system
+  updates.js       starts Pane's update check; hands over to the pane command when Pane
+                   moved on or an app update waits
   windows.js, backend.js, protocol.js, menu.js, dev.js, preload.js
 src/cli/         the pane command: index.js dispatches to commands/<name>.js
 src/packaging/   installing Pane (runtime.js) and apps (apps.js), pane build (build.js),
                  installers/ (install.sh, .dmg, Setup.exe), launchers/ (macOS, Windows, Linux),
-                 signing/ (codesign, signtool), publishers.js (which key owns each app id)
+                 signing/ (codesign, signtool, local-identity.js for launchers),
+                 publishers.js (which key owns each app id), updates: runtime-download.js,
+                 self-update.js (Pane's own) and app-updates.js (apps' own)
 sdk/backend/     the `pane` module app backends import
 templates/       vanilla, react, svelte and _shared, filled in by pane create
 installer/windows/  PaneSetup.cs, the Windows installer program
@@ -323,17 +372,22 @@ npm run test:templates    # React and Svelte: npm install, Vite dev server, hot 
 npm run test:notes        # drives the Notes example like a user: write, search, second window, delete
 npm run test:installers   # the real .dmg (macOS) or Setup.exe (Windows) against a local copy of the distribution
 npm run test:signing      # pane build --sign with a throwaway certificate (macOS or Windows)
+npm run test:updates      # Pane and app updates end to end; opens and reopens windows, so it
+                          # runs only in CI unless PANE_RUN_WINDOW_TESTS=1
+npm run test:keychain     # launcher signing keeps pane.secrets across updates (macOS; changes
+                          # keychain settings, so it runs only when CI is set)
 ```
 
-CI (`.github/workflows/ci.yml`) runs the unit and smoke tests on macOS, Windows and Linux, the template and Notes tests on macOS, and the installer tests on macOS and Windows.
+CI (`.github/workflows/ci.yml`) runs the unit and smoke tests on macOS, Windows and Linux, the template and Notes tests on macOS, and the installer, signing and update tests on macOS and Windows (plus the keychain test on macOS).
 
 ## Not done yet
 
 - **Windows** installs are tested end to end in CI on Windows Server, not yet by hand on a Windows 10 or 11 desktop. Task Manager lists Pane apps as "Electron", because they share Pane's `electron.exe`.
 - **Linux** launchers are written but not tested, and there's no Linux installer beyond `install.sh`.
 - **Real certificates are untested.** `pane build --sign` is tested in CI with throwaway certificates. Nobody has yet notarized with Apple or built SmartScreen reputation. "Install <App>" runs a shell script as its program, and Apple's notary service may reject that.
-- **No updater.** A launcher keeps the Chromium it was installed with until the app is installed again.
-- **Signing.** Launchers are signed ad hoc, so macOS may ask again for access to an app's saved secrets after Pane updates. Pane's own release key isn't created yet, so installers built today refuse to download Pane (`pane build` warns about this).
+- **Release key.** Pane's own release key isn't created yet, so installers built today refuse to download Pane (`pane build` warns about this), and installed Panes cannot update themselves.
+- **Updates have no rollback.** A bad Pane or app version is fixed by shipping a newer one. App updates don't check Apple or Microsoft certificates, only the app's own key.
+- **Pinned apps** (`"pane": "=x.y.z"` on an older Pane) can't install their own updates yet.
 - **Fuses** are turned off only in macOS launchers. Windows and Linux apps run the shared `electron.exe`, which the `pane` command needs as Node.
 - **Intel Macs and Linux on ARM** have no release build yet. The release workflow builds macOS arm64, Windows x64 and Linux x64.
 
