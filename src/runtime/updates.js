@@ -14,7 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { RUNTIME_ROOT, appsDir } = require('../core/paths');
-const { updateDue, REOPENED_FLAG } = require('../core/update-state');
+const { updateDue, logUpdate, REOPENED_FLAG } = require('../core/update-state');
 const { markRunning, clearRunning } = require('../core/running');
 
 const CHECK_DELAY_MS = 10000;
@@ -35,7 +35,7 @@ function spawnPane(home, args, opts) {
 // Starts `pane <args>` in the background, detached from this app.
 function runPane(home, args) {
   const child = spawnPane(home, args, { detached: true, stdio: 'ignore' });
-  child.on('error', () => {});
+  child.on('error', (err) => logUpdate(`could not start pane ${args[0]}: ${err.message}`));
   child.unref();
 }
 
@@ -96,6 +96,7 @@ function startUpdates({ app, manifest, home, dev }) {
   if (!record) return { installed: false, pendingRelaunch: false, scheduleCheck() {} };
 
   if (shouldHandOver(record)) {
+    logUpdate(`${manifest.id}: handing over to pane launcher-refresh (${record.pendingUpdate ? 'update waiting' : `moving onto ${record.pendingRuntime}`})`);
     runPane(home, ['launcher-refresh', manifest.id, '--open', '--after', String(process.pid), '--', ...openArgs()]);
     return { installed: true, pendingRelaunch: true, scheduleCheck() {} };
   }

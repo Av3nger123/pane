@@ -2,6 +2,7 @@
 // Small shared state for updates, in PANE_HOME (plain files, no Electron):
 //   update-check.json   when Pane last looked for a newer version
 //   locks/<name>.lock   one updater at a time (holds the pid)
+//   logs/update.log     what updates did (the only place they report to)
 
 const fs = require('fs');
 const path = require('path');
@@ -62,4 +63,12 @@ function takeLock(name) {
   return null;
 }
 
-module.exports = { updateDue, markChecked, takeLock, alive, REOPENED_FLAG };
+function logUpdate(line) {
+  try {
+    const dir = path.join(paneHome(), 'logs');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(path.join(dir, 'update.log'), `${new Date().toISOString()} ${line}\n`);
+  } catch { /* logging must never break an app or an update */ }
+}
+
+module.exports = { updateDue, markChecked, takeLock, alive, logUpdate, REOPENED_FLAG };

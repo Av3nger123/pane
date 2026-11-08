@@ -230,6 +230,11 @@ async function main() {
     console.error('\nUpdate test FAILED:', err.stack || err.message);
     const log = path.join(home, 'logs', 'update.log');
     if (fs.existsSync(log)) console.error(`--- update.log ---\n${fs.readFileSync(log, 'utf8')}`);
+    for (const id of installed) {
+      const rec = path.join(home, 'apps', id, '.pane-install.json');
+      if (fs.existsSync(rec)) console.error(`--- ${id} record ---\n${fs.readFileSync(rec, 'utf8')}`);
+    }
+    try { console.error(`--- locks ---\n${fs.readdirSync(path.join(home, 'locks')).join('\n')}`); } catch { /* none */ }
     process.exitCode = 1;
   } finally {
     for (const child of children) { try { child.kill(); } catch { /* gone */ } }

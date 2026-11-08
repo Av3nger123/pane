@@ -11,29 +11,26 @@
 // marked so it never hands over again. If another refresh of the same app is
 // running, this one does nothing.
 
-const fs = require('fs');
 const path = require('path');
-const { paneHome, appsDir } = require('../../core/paths');
-const { alive, takeLock } = require('../../core/update-state');
+const { appsDir } = require('../../core/paths');
+const { alive, takeLock, logUpdate: log } = require('../../core/update-state');
 const { refreshLauncher, readRecord, writeRecord, openInstalledApp } = require('../../packaging/apps');
 const { cleanupRuntimes } = require('../../packaging/runtime');
 const { UsageError } = require('../util');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function log(line) {
-  const dir = path.join(paneHome(), 'logs');
-  fs.mkdirSync(dir, { recursive: true });
-  fs.appendFileSync(path.join(dir, 'update.log'), `${new Date().toISOString()} ${line}\n`);
-}
-
 async function launcherRefresh(id, flags, extra = []) {
   if (!id) throw new UsageError('pane launcher-refresh <app-id> [--open] [--after <pid>]');
   const after = Number(flags.after);
   for (let waited = 0; after && alive(after) && waited < 30000; waited += 200) await sleep(200);
 
+  log(`${id}: launcher-refresh started${after && alive(after) ? ` (app ${after} still running after 30 s)` : ''}`);
   const release = takeLock(`app-${id}`);
-  if (!release) return 0; // another refresh of this app is running and will reopen it
+  if (!release) { // another refresh of this app is running and will reopen it
+    log(`${id}: another refresh is running; this one does nothing`);
+    return 0;
+  }
   const appHome = path.join(appsDir(), id);
   try {
     const record = readRecord(appHome);
@@ -61,10 +58,19 @@ async function launcherRefresh(id, flags, extra = []) {
         log(`${id}: could not move onto ${pendingRuntime}: ${err.message}`);
       }
     }
+  } catch (err) {
+    log(`${id}: launcher-refresh failed: ${err.message}`);
   } finally {
     release();
   }
-  if (flags.open) openInstalledApp(readRecord(appHome), extra);
+  if (flags.open) {
+    try {
+      openInstalledApp(readRecord(appHome), extra);
+      log(`${id}: reopened`);
+    } catch (err) {
+      log(`${id}: could not reopen: ${err.message}`);
+    }
+  }
   return 0;
 }
 
