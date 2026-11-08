@@ -66,3 +66,60 @@ test('pack-runtime: latest file, baked keys, other versions', { skip: process.pl
 });
 
 module.exports = { withEnv, packedRuntime, A, B, tmp };
+
+// ---- Downloading a Pane ---------------------------------------------------
+
+const { serveDir } = require('../e2e/lib/serve');
+
+// A copy of a packed distribution with one change.
+function distCopy(src, change) {
+  const out = tmp('pane-dist-');
+  fs.cpSync(src, out, { recursive: true });
+  change(out);
+  return out;
+}
+
+test('downloadRuntime installs a signed Pane of the asked version', { skip: process.platform === 'win32' }, async () => {
+  const { downloadRuntime } = require('../../src/packaging/runtime-download');
+  const result = await packedRuntime();
+  const server = await serveDir(result.out);
+  try {
+    await withEnv({ PANE_HOME: tmp('pane-home-') }, async () => {
+      const installed = await downloadRuntime({ version: '0.1.1', dist: server.url, keys: [A.publicPem] });
+      assert.equal(installed.version, '0.1.1');
+      assert.ok(fs.existsSync(path.join(installed.dir, 'main.js')));
+      assert.equal(path.basename(installed.dir), '0.1.1');
+    });
+  } finally {
+    server.close();
+  }
+});
+
+test('downloadRuntime refuses a wrong key, a missing signature, a wrong version', { skip: process.platform === 'win32' }, async () => {
+  const { downloadRuntime } = require('../../src/packaging/runtime-download');
+  const { packRuntime, runtimeArchiveName } = require('../../src/packaging/runtime');
+  const result = await packedRuntime();
+  const name = runtimeArchiveName('0.1.1');
+  const unsigned = distCopy(result.out, (d) => fs.rmSync(path.join(d, 'v0.1.1', `${name}.sig`)));
+  // A correctly signed 0.1.2 served under 0.1.1's name.
+  const other = tmp('pane-pack-');
+  await withEnv({ PANE_RELEASE_KEYS: JSON.stringify([A.publicPem]) }, () => packRuntime({ out: other, signingKey: A.privatePem, version: '0.1.2' }));
+  const swapped = distCopy(result.out, (d) => {
+    const from = path.join(other, 'v0.1.2', runtimeArchiveName('0.1.2'));
+    fs.copyFileSync(from, path.join(d, 'v0.1.1', name));
+    fs.copyFileSync(`${from}.sig`, path.join(d, 'v0.1.1', `${name}.sig`));
+  });
+  const servers = await Promise.all([result.out, unsigned, swapped].map(serveDir));
+  try {
+    await withEnv({ PANE_HOME: tmp('pane-home-') }, async () => {
+      const { runtimesDir } = require('../../src/core/paths');
+      const versions = () => (fs.existsSync(runtimesDir()) ? fs.readdirSync(runtimesDir()).filter((v) => /^\d/.test(v)) : []);
+      await assert.rejects(downloadRuntime({ version: '0.1.1', dist: servers[0].url, keys: [B.publicPem] }), /not signed by Pane/);
+      await assert.rejects(downloadRuntime({ version: '0.1.1', dist: servers[1].url, keys: [A.publicPem] }), /not signed by Pane|signature/);
+      await assert.rejects(downloadRuntime({ version: '0.1.1', dist: servers[2].url, keys: [A.publicPem] }), /version 0\.1\.2.*0\.1\.1/);
+      assert.deepEqual(versions(), []);
+    });
+  } finally {
+    servers.forEach((s) => s.close());
+  }
+});
