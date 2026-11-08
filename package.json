@@ -10,7 +10,8 @@
   },
   "pane": {
     "distributionUrl": "https://github.com/Av3nger123/pane/releases/download",
-    "releaseKeys": []
+    "releaseKeys": [],
+    "latestUrl": "https://github.com/Av3nger123/pane/releases/latest/download/pane-latest.json"
   },
   "bin": {
     "pane": "bin/pane.js"

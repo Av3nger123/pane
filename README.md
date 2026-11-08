@@ -230,6 +230,8 @@ The release workflow (`.github/workflows/release.yml`) creates the GitHub releas
 
 `pane pack-runtime --out pane-dist --key <file>` makes the same files by hand.
 
+**Pane's updates.** Each release also attaches `pane-latest.json`. Installed Panes read it through `"pane.latestUrl"` (GitHub's `releases/latest/download/` address) to find the newest version. GitHub's "latest" skips pre-releases, and the release workflow creates pre-releases, so installed Panes update to a version once it is marked as the latest release on GitHub.
+
 **Release keys.** `pane keygen --release <file>` creates one. Put its public key in `"pane.releaseKeys"`, store the private key as the GitHub secret `PANE_RELEASE_SIGNING_KEY`, then delete the file. To replace a key, add the new public key next to the old one, release with the new key, and remove the old public key once apps built with it no longer need to download Pane. `PANE_DIST_URL` overrides the address, for example to test against a local server. The address must use https, except `localhost` while testing.
 
 ### Signing your app

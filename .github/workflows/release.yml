@@ -5,6 +5,7 @@ name: Release
 # The release then holds everything app installers and developers download:
 #   pane-runtime-<v>-<os>-<arch>.tar.gz (+ .sig, .sha256)   Pane itself, per OS
 #   pane-runtime-<v>.tgz                              the developer package (pane CLI)
+#   pane-latest.json                                  {"version":"<v>"}: installed Panes update to it
 
 on:
   push:
@@ -58,6 +59,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$GITHUB_REF_NAME" pane-dist/"$GITHUB_REF_NAME"/* --clobber
+      - name: Announce this version (pane-latest.json)
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" pane-dist/pane-latest.json --clobber
 
   developer-package:
     needs: create

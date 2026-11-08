@@ -8,7 +8,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { parse, compare } = require('../core/version');
-const { signRelease } = require('../core/release-signature');
+const { signRelease, releaseKeys } = require('../core/release-signature');
 const {
   RUNTIME_ROOT, RUNTIME_VERSION, runtimesDir, binDir, electronBinary, electronPackageDir,
 } = require('../core/paths');
@@ -45,13 +45,22 @@ function runtimeVersionOf(dir) {
 const commandPath = () => path.join(binDir(), process.platform === 'win32' ? 'pane.cmd' : 'pane');
 
 // A self-contained runtime folder: Pane's files plus node_modules/electron.
-function stageRuntime(from, dest) {
+// pkg: changes to its package.json (packing bakes in the release keys, and
+// tests pack other versions).
+function stageRuntime(from, dest, pkg = null) {
   fs.rmSync(dest, { recursive: true, force: true });
   fs.mkdirSync(dest, { recursive: true });
   for (const rel of RUNTIME_FILES) {
     const src = path.join(from, rel);
     if (!fs.existsSync(src)) throw new Error(`The runtime is incomplete: ${rel} is missing.`);
     copyTree(src, path.join(dest, rel));
+  }
+  if (pkg) {
+    const file = path.join(dest, 'package.json');
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (pkg.version) data.version = pkg.version;
+    if (pkg.releaseKeys) data.pane = { ...data.pane, releaseKeys: pkg.releaseKeys };
+    fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
   }
   fs.mkdirSync(path.join(dest, 'node_modules'), { recursive: true });
   electronBinary(from); // downloads Electron if it is not there yet
@@ -104,14 +113,26 @@ function installedRuntime() {
 
 const PACKAGE = require('../../package.json');
 
-function distributionUrl() {
-  const url = (process.env.PANE_DIST_URL || (PACKAGE.pane && PACKAGE.pane.distributionUrl) || '').trim().replace(/\/+$/, '');
-  if (!url) return null;
-  // https only, except a local server for testing.
+// https only, except a local server for testing.
+function checkAddress(url, what) {
   if (!/^https:\/\//i.test(url) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(url)) {
-    throw new Error(`Pane's distribution address must use https: ${url}`);
+    throw new Error(`${what} must use https: ${url}`);
   }
   return url;
+}
+
+function distributionUrl() {
+  const url = (process.env.PANE_DIST_URL || (PACKAGE.pane && PACKAGE.pane.distributionUrl) || '').trim().replace(/\/+$/, '');
+  return url ? checkAddress(url, "Pane's distribution address") : null;
+}
+
+// Where the newest Pane version is announced: a small JSON file,
+// {"version":"0.2.0"}, that the release workflow publishes. A changed copy can
+// at worst delay an update; every download is still checked for Pane's
+// signature and version.
+function latestUrl({ env = process.env } = {}) {
+  const url = (env.PANE_LATEST_URL || (PACKAGE.pane && PACKAGE.pane.latestUrl) || '').trim();
+  return url ? checkAddress(url, "Pane's latest-version address") : null;
 }
 
 const runtimeArchiveName = (version, platform = process.platform, arch = process.arch) =>
@@ -120,15 +141,18 @@ const runtimeArchiveName = (version, platform = process.platform, arch = process
 // Writes this runtime, for this OS and CPU, as files to upload to the
 // distribution server: <out>/v<version>/<archive>, <archive>.sig and
 // <archive>.sha256. signingKey: Pane's private release key (PEM); defaults to
-// PANE_RELEASE_SIGNING_KEY.
-function packRuntime({ out, signingKey = process.env.PANE_RELEASE_SIGNING_KEY }) {
+// PANE_RELEASE_SIGNING_KEY. The packed runtime trusts releaseKeys() (Pane's
+// package.json, or PANE_RELEASE_KEYS while packing) for its own updates.
+// version: pack under another version number (for tests). Also writes
+// <out>/pane-latest.json.
+function packRuntime({ out, signingKey = process.env.PANE_RELEASE_SIGNING_KEY, version = RUNTIME_VERSION }) {
   if (!signingKey) throw new Error("Pane's release signing key is missing. Set PANE_RELEASE_SIGNING_KEY or pass --key <file>.");
-  const dir = path.join(path.resolve(out), `v${RUNTIME_VERSION}`);
+  const dir = path.join(path.resolve(out), `v${version}`);
   fs.mkdirSync(dir, { recursive: true });
-  const archive = path.join(dir, runtimeArchiveName(RUNTIME_VERSION));
+  const archive = path.join(dir, runtimeArchiveName(version));
   const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'pane-runtime-'));
   try {
-    stageRuntime(RUNTIME_ROOT, path.join(stage, 'runtime'));
+    stageRuntime(RUNTIME_ROOT, path.join(stage, 'runtime'), { version, releaseKeys: releaseKeys() });
     execFileSync('tar', ['-czf', archive, '-C', path.join(stage, 'runtime'), '.'], { stdio: 'pipe' });
   } finally {
     fs.rmSync(stage, { recursive: true, force: true });
@@ -137,7 +161,9 @@ function packRuntime({ out, signingKey = process.env.PANE_RELEASE_SIGNING_KEY })
   fs.writeFileSync(`${archive}.sha256`, `${sha256}  ${path.basename(archive)}\n`);
   const signature = `${archive}.sig`;
   fs.writeFileSync(signature, signRelease(fs.readFileSync(archive), signingKey));
-  return { dir, archive, sha256, signature };
+  const latest = path.join(path.resolve(out), 'pane-latest.json');
+  fs.writeFileSync(latest, `${JSON.stringify({ version })}\n`);
+  return { dir, archive, sha256, signature, latest };
 }
 
 function copyTree(from, to) {
@@ -148,5 +174,6 @@ function copyTree(from, to) {
 }
 
 module.exports = {
-  setupRuntime, stageRuntime, installedRuntime, packRuntime, distributionUrl, runtimeArchiveName, copyTree,
+  setupRuntime, stageRuntime, installedRuntime, packRuntime, distributionUrl, latestUrl, runtimeArchiveName, copyTree,
+  runtimeVersionOf,
 };
