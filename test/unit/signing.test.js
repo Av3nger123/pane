@@ -284,10 +284,11 @@ test('the .paneapp has no macOS metadata entries and keeps relative links', { sk
 });
 
 test('installed apps keep relative links', { skip: process.platform === 'win32' }, () => {
-  const saved = { home: process.env.PANE_HOME, launchers: process.env.PANE_LAUNCHERS_DIR };
+  const saved = { home: process.env.PANE_HOME, launchers: process.env.PANE_LAUNCHERS_DIR, signing: process.env.PANE_LAUNCHER_SIGNING };
   const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'pane-links-'));
   process.env.PANE_HOME = path.join(sandbox, 'home');
   process.env.PANE_LAUNCHERS_DIR = path.join(sandbox, 'launchers');
+  process.env.PANE_LAUNCHER_SIGNING = 'adhoc'; // never touch this computer's keychains
   const { installApp, uninstallApp } = require('../../src/packaging/apps');
   const app = path.join(sandbox, 'app');
   fs.mkdirSync(path.join(app, 'ui'), { recursive: true });
@@ -301,6 +302,7 @@ test('installed apps keep relative links', { skip: process.platform === 'win32' 
     try { uninstallApp('link-check', { purge: true }); } catch { /* not installed */ }
     if (saved.home === undefined) delete process.env.PANE_HOME; else process.env.PANE_HOME = saved.home;
     if (saved.launchers === undefined) delete process.env.PANE_LAUNCHERS_DIR; else process.env.PANE_LAUNCHERS_DIR = saved.launchers;
+    if (saved.signing === undefined) delete process.env.PANE_LAUNCHER_SIGNING; else process.env.PANE_LAUNCHER_SIGNING = saved.signing;
     fs.rmSync(sandbox, { recursive: true, force: true });
   }
 });

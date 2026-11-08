@@ -132,7 +132,7 @@ async function windows({ work, baseEnv, appDir, manifest, release, p12, password
   ok('the signature covers the attached app: changing one byte of it breaks the signature');
 
   const home = path.join(work, 'home');
-  const env = { ...baseEnv, PANE_HOME: home, PANE_LAUNCHERS_DIR: path.join(work, 'launchers') };
+  const env = { ...baseEnv, PANE_HOME: home, PANE_LAUNCHERS_DIR: path.join(work, 'launchers'), PANE_LAUNCHER_SIGNING: 'adhoc' };
   delete env.PANE_RELEASE_KEYS;
   const { code } = await run(exe, ['/quiet'], env);
   const log = fs.readFileSync(path.join(os.tmpdir(), 'pane-setup.log'), 'utf8');

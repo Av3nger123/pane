@@ -10,6 +10,7 @@ const { execFileSync } = require('child_process');
 const { electronDist } = require('../../core/paths');
 const { setFuses, LAUNCHER_FUSES } = require('../../core/fuses');
 const { repairPageHashes } = require('../../core/macho-signature');
+const { ensureLocalIdentity } = require('../signing/local-identity');
 const { fileName, execName } = require('./names');
 
 const LSREGISTER = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister';
@@ -96,13 +97,31 @@ function buildMacBundle({ tmp, manifest, appDir, runtimeRoot, home }) {
   const framework = path.join(frameworks, 'Electron Framework.framework', 'Electron Framework');
   repairPageHashes(framework, setFuses(framework, LAUNCHER_FUSES));
 
-  // Ad-hoc signatures for what changed (renamed helpers, the app's Info.plist
+  // New signatures for what changed (renamed helpers, the app's Info.plist
   // and files): required on Apple silicon. Not --deep: that would re-sign the
   // unchanged frameworks and rewrite them in full.
+  const sign = signingArgs(manifest);
   for (const entry of fs.readdirSync(frameworks)) {
-    if (/ Helper.*\.app$/.test(entry)) execFileSync('codesign', ['--force', '--sign', '-', path.join(frameworks, entry)], { stdio: 'pipe' });
+    if (/ Helper.*\.app$/.test(entry)) execFileSync('codesign', [...sign, path.join(frameworks, entry)], { stdio: 'pipe' });
   }
-  execFileSync('codesign', ['--force', '--sign', '-', tmp], { stdio: 'pipe' });
+  execFileSync('codesign', [...sign, tmp], { stdio: 'pipe' });
+}
+
+// Signed with this computer's own Pane identity, so the signature stays the
+// same when the launcher is rebuilt (a Pane update) and the app keeps access
+// to its keychain items (pane.secrets) without asking for a password.
+// Ad hoc when that identity cannot be set up: the app still works, but may
+// ask for the password once after a rebuild.
+function signingArgs(manifest) {
+  let local = null;
+  try {
+    local = ensureLocalIdentity();
+  } catch (err) {
+    process.stderr.write(`${manifest.name}'s launcher is signed ad hoc: ${err.message}\n`);
+  }
+  return local
+    ? ['--force', '--timestamp=none', '--sign', local.identity, '--keychain', local.keychain]
+    : ['--force', '--sign', '-'];
 }
 
 // The tiny Electron "app" inside the launcher: points at the app's files and
