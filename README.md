@@ -2,12 +2,46 @@
 
 # Pane
 
-Pane is installed on a computer once. After that, every Pane app uses Pane's Chromium and Node, so an app is only its own files: tens of KB instead of the 150 to 300 MB that each Electron app ships.
+**Pane lets you build desktop apps with web technology, without shipping a browser inside every app.**
+
+You write the app the way you would write a website, in HTML, CSS and JavaScript with React, Svelte or nothing at all. If it needs to touch the computer, you add an optional Node.js backend. Pane turns it into a real desktop app for macOS and Windows (Linux is in progress).
+
+## The problem
+
+Desktop apps built with Electron (VS Code, Slack, Discord, Notion and many others) each carry their own copy of Chromium and Node. That copy is the 150–300 MB download every one of them makes you take. Ten such apps mean ten copies of nearly the same browser on one computer, each downloaded, stored and updated separately.
+
+## What Pane does instead
+
+Pane installs Chromium and Node **once per computer**, and every Pane app shares them:
+
+| | A typical Electron app | A Pane app |
+|---|---|---|
+| What you ship | Your app plus Chromium and Node | Only your app's files |
+| Download size | 150–300 MB | Usually kilobytes (the Notes example is about 100 KB) |
+| Ten apps on one computer | Ten copies of the browser | One shared copy |
+
+Your users never have to know Pane exists:
+- The app's installer checks whether the computer has Pane.
+- If not, it downloads Pane once from Pane's GitHub releases and checks its signature, then installs the app.
+- The next Pane app installs without downloading Pane again.
 
 Each app still behaves like a normal desktop app:
 - It runs in its own process.
-- It opens as many windows as it needs.
 - It has its own name and icon in the Dock or taskbar, and its own data.
+- It opens as many windows as it needs.
+
+## What you can build with it
+
+Anything you would build with Electron, using the same web skills:
+- **Native features.** Open and save dialogs, app and right-click menus with shortcuts, notifications, multiple windows that remember their size, light and dark mode.
+- **Files and links.** Open with: double-clicking your file type opens your app, and links like `myapp://...` open it from the browser. Files can be dragged onto its windows.
+- **Data.** A settings store, plus passwords and tokens kept encrypted in the system keychain.
+- **A Node backend.** Read and write files, call APIs, use npm packages, and talk to the page with `pane.call()` and events.
+- **Installers.** `pane build` makes a `.dmg` for macOS and a `Setup.exe` for Windows. Signing them with your own key is free and keeps anyone else from replacing your app; Apple or Microsoft certificates are optional.
+
+[`examples/notes`](examples/notes) is a complete Markdown notes app built this way.
+
+**Status:** early and not released yet. Pane runs and is tested on macOS and Windows. Automatic updates are the next phase. See [Not done yet](#not-done-yet).
 
 ## Start an app
 
