@@ -197,7 +197,9 @@ static class PaneSetup
         RunOrThrow(Path.Combine(Environment.SystemDirectory, "tar.exe"), Quote("-xzf") + " " + Quote(archive) + " -C " + Quote(unpack), null, "Unpacking Pane");
         var env = new Dictionary<string, string> { { "ELECTRON_RUN_AS_NODE", "1" } };
         string electron = Path.Combine(unpack, "node_modules", "electron", "dist", "electron.exe");
-        RunOrThrow(electron, Quote(Path.Combine(unpack, "bin", "pane.js")) + " setup", env, "Installing Pane");
+        // --expect: the signature proves the download is Pane's; this proves it
+        // is the version asked for.
+        RunOrThrow(electron, Quote(Path.Combine(unpack, "bin", "pane.js")) + " setup --expect " + Quote(version), env, "Installing Pane");
     }
 
     static void Download(string url, string target, string label)

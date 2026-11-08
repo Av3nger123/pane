@@ -242,3 +242,112 @@ test('fuses: the framework signature is repaired in place', { skip: process.plat
     fs.rmSync(path.dirname(tmp), { recursive: true, force: true });
   }
 });
+
+// ---- Final review fixes ---------------------------------------------------
+
+// Member names and link targets of a .tar.gz, read without bsdtar (which
+// hides macOS metadata entries when it extracts).
+function tarMembers(file) {
+  const tar = require('zlib').gunzipSync(fs.readFileSync(file));
+  const out = [];
+  for (let at = 0; at + 512 <= tar.length;) {
+    const header = tar.subarray(at, at + 512);
+    if (header.every((b) => b === 0)) break;
+    const str = (from, len) => header.subarray(from, from + len).toString('utf8').replace(/\0.*$/s, '');
+    const name = (str(345, 155) ? `${str(345, 155)}/` : '') + str(0, 100);
+    const size = parseInt(str(124, 12).trim() || '0', 8);
+    out.push({ name: name.replace(/^\.\//, ''), type: String.fromCharCode(header[156]), link: str(157, 100) });
+    at += 512 + Math.ceil(size / 512) * 512;
+  }
+  return out.filter((m) => m.type !== 'x' && m.type !== 'g'); // skip pax headers
+}
+
+test('the .paneapp has no macOS metadata entries and keeps relative links', { skip: process.platform === 'win32' }, async () => {
+  const { buildInstaller } = require('../../src/packaging/build');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pane-tar-'));
+  fs.writeFileSync(path.join(dir, 'pane.json'), '{"id":"tar-check","name":"Tar Check"}');
+  fs.mkdirSync(path.join(dir, 'ui', 'lib'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'ui', 'index.html'), '<p>x</p>');
+  fs.writeFileSync(path.join(dir, 'ui', 'lib', 'real.js'), '1');
+  fs.symlinkSync('real.js', path.join(dir, 'ui', 'lib', 'link.js'));
+  if (process.platform === 'darwin') execFileSync('xattr', ['-w', 'com.example.test', 'x', path.join(dir, 'ui', 'index.html')]);
+  const keyFile = path.join(dir, '..', `pane-tar-key-${process.pid}.pem`);
+  fs.writeFileSync(keyFile, appKeyA.privatePem);
+  try {
+    const result = await buildInstaller(dir, { key: keyFile });
+    const members = tarMembers(result.package);
+    assert.deepEqual(members.filter((m) => /(^|\/)\._/.test(m.name)).map((m) => m.name), []);
+    assert.equal(members.find((m) => m.name === 'ui/lib/link.js').link, 'real.js');
+  } finally {
+    fs.rmSync(keyFile, { force: true });
+  }
+});
+
+test('installed apps keep relative links', { skip: process.platform === 'win32' }, () => {
+  const saved = { home: process.env.PANE_HOME, launchers: process.env.PANE_LAUNCHERS_DIR };
+  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'pane-links-'));
+  process.env.PANE_HOME = path.join(sandbox, 'home');
+  process.env.PANE_LAUNCHERS_DIR = path.join(sandbox, 'launchers');
+  const { installApp, uninstallApp } = require('../../src/packaging/apps');
+  const app = path.join(sandbox, 'app');
+  fs.mkdirSync(path.join(app, 'ui'), { recursive: true });
+  fs.writeFileSync(path.join(app, 'pane.json'), '{"id":"link-check","name":"Link Check"}');
+  fs.writeFileSync(path.join(app, 'ui', 'index.html'), '');
+  fs.symlinkSync('index.html', path.join(app, 'ui', 'alias.html'));
+  try {
+    installApp(app);
+    assert.equal(fs.readlinkSync(path.join(process.env.PANE_HOME, 'apps', 'link-check', 'ui', 'alias.html')), 'index.html');
+  } finally {
+    try { uninstallApp('link-check', { purge: true }); } catch { /* not installed */ }
+    if (saved.home === undefined) delete process.env.PANE_HOME; else process.env.PANE_HOME = saved.home;
+    if (saved.launchers === undefined) delete process.env.PANE_LAUNCHERS_DIR; else process.env.PANE_LAUNCHERS_DIR = saved.launchers;
+    fs.rmSync(sandbox, { recursive: true, force: true });
+  }
+});
+
+test('uninstall --purge refuses ids that are not app ids', () => {
+  const saved = process.env.PANE_HOME;
+  process.env.PANE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'pane-purge-'));
+  const data = path.join(process.env.PANE_HOME, 'data');
+  fs.mkdirSync(path.join(data, 'notes'), { recursive: true });
+  try {
+    const { uninstallApp } = require('../../src/packaging/apps');
+    for (const id of ['.', '..', '../..', 'a/b', '']) {
+      assert.throws(() => uninstallApp(id, { purge: true }), /not an app id/, `refuses ${JSON.stringify(id)}`);
+    }
+    assert.ok(fs.existsSync(path.join(data, 'notes')), "other apps' data is untouched");
+  } finally {
+    if (saved === undefined) delete process.env.PANE_HOME; else process.env.PANE_HOME = saved;
+  }
+});
+
+test('publishers: the whole key decides, not its fingerprint', () => {
+  const saved = process.env.PANE_HOME;
+  process.env.PANE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'pane-home-'));
+  try {
+    const { checkPublisher, recordPublisher } = require('../../src/packaging/publishers');
+    recordPublisher('notes', { publicKey: appKeyA.publicPem, fingerprint: fingerprint(appKeyA.publicPem), publisher: 'Acme' });
+    const lookalike = { publicKey: appKeyB.publicPem, fingerprint: fingerprint(appKeyA.publicPem), publisher: 'Acme' };
+    assert.throws(() => checkPublisher('notes', lookalike), (e) => e.code === 'PUBLISHER_CHANGED');
+  } finally {
+    if (saved === undefined) delete process.env.PANE_HOME; else process.env.PANE_HOME = saved;
+  }
+});
+
+test('publishers: a damaged record file stops installs instead of forgetting owners', () => {
+  const saved = process.env.PANE_HOME;
+  process.env.PANE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'pane-home-'));
+  const file = path.join(process.env.PANE_HOME, 'publishers.json');
+  try {
+    const { checkPublisher, recordPublisher } = require('../../src/packaging/publishers');
+    const A = { publicKey: appKeyA.publicPem, fingerprint: fingerprint(appKeyA.publicPem), publisher: 'Acme' };
+    fs.writeFileSync(file, '{ not json');
+    assert.throws(() => checkPublisher('notes', A), /publishers\.json/);
+    assert.throws(() => recordPublisher('other', A), /publishers\.json/);
+    assert.equal(fs.readFileSync(file, 'utf8'), '{ not json', 'the file is left for the user to inspect');
+    fs.writeFileSync(file, JSON.stringify({ notes: { name: 'x' } }));
+    assert.throws(() => checkPublisher('notes', A), /publishers\.json/);
+  } finally {
+    if (saved === undefined) delete process.env.PANE_HOME; else process.env.PANE_HOME = saved;
+  }
+});

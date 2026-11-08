@@ -213,4 +213,4 @@ function isDir(p) {
   try { return fs.statSync(p).isDirectory(); } catch { return false; }
 }
 
-module.exports = { loadManifest, normalizeManifest, ManifestError, PERMISSIONS };
+module.exports = { loadManifest, normalizeManifest, ManifestError, PERMISSIONS, ID_RE };

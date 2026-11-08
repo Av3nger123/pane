@@ -58,6 +58,7 @@ async function buildInstaller(appDir, { out, key, sign = false } = {}) {
     // dependencies only (frontend build tools are not needed at runtime).
     fs.cpSync(manifest.dir, stage, {
       recursive: true,
+      verbatimSymlinks: true, // relative links stay relative
       filter: (p) => !SKIP_IN_APP.has(path.basename(p)) && !(path.basename(p) === 'node_modules' && path.dirname(p) === manifest.dir),
     });
     if (hasProductionDeps(stage)) {
@@ -83,7 +84,12 @@ async function buildInstaller(appDir, { out, key, sign = false } = {}) {
     }
     const pkgName = `${manifest.id}-${manifest.version}.paneapp`;
     const pkg = path.join(outDir, pkgName);
-    execFileSync('tar', ['-czf', pkg, '-C', stage, ...fs.readdirSync(stage)], { stdio: 'pipe' });
+    // No macOS metadata (AppleDouble "._" entries): other systems would unpack
+    // them as files the app's signature does not list.
+    const macOnly = process.platform === 'darwin' ? ['--no-mac-metadata'] : [];
+    execFileSync('tar', [...macOnly, '-czf', pkg, '-C', stage, ...fs.readdirSync(stage)], {
+      stdio: 'pipe', env: { ...process.env, COPYFILE_DISABLE: '1' },
+    });
 
     const opts = { name: manifest.name, pkgName, paneVersion: RUNTIME_VERSION, dist: dist || '', releaseKeys: keys };
     const installers = [];

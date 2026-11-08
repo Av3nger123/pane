@@ -40,7 +40,7 @@ Usage:
   pane version
 `;
 
-const VALUE_FLAGS = new Set(['name', 'out', 'template', 'key']);
+const VALUE_FLAGS = new Set(['name', 'out', 'template', 'key', 'expect']);
 
 function parseArgs(argv) {
   const positional = [];
@@ -77,7 +77,7 @@ function main() {
     case 'open': return command('open').openRequest(positional[0], positional[1], flags);
     case 'uninstall': return command('uninstall').uninstall(positional[0], flags);
     case 'list': return command('list').list();
-    case 'setup': return command('setup').setup();
+    case 'setup': return command('setup').setup(flags);
     case 'pack-runtime': return command('pack-runtime').packRuntimeCommand(flags);
     case 'keygen': return command('keygen').keygen(positional[0], flags);
     case 'version': case '--version': case '-v':

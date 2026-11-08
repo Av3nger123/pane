@@ -81,7 +81,8 @@ ${writeKeys}
   else
     ELECTRON="$TMP/runtime/node_modules/electron/dist/electron"
   fi
-  ELECTRON_RUN_AS_NODE=1 "$ELECTRON" "$TMP/runtime/bin/pane.js" setup || { rm -rf "$TMP"; fail "Could not install Pane."; }
+  SETUP_OUTPUT=$(ELECTRON_RUN_AS_NODE=1 "$ELECTRON" "$TMP/runtime/bin/pane.js" setup --expect "$PANE_VERSION" 2>&1) || { rm -rf "$TMP"; fail "Could not install Pane. $SETUP_OUTPUT"; }
+  echo "$SETUP_OUTPUT"
   rm -rf "$TMP"
 }
 

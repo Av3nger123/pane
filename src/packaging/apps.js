@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { loadManifest } = require('../core/manifest');
+const { loadManifest, ID_RE } = require('../core/manifest');
 const { satisfies } = require('../core/version');
 const { createLauncher, removeLauncher, fileName } = require('./launchers');
 const { verifyApp, AppSignatureError } = require('../core/app-signature');
@@ -60,6 +60,7 @@ function installApp(source) {
     fs.mkdirSync(path.dirname(tmp), { recursive: true });
     fs.cpSync(appSource, tmp, {
       recursive: true,
+      verbatimSymlinks: true, // keep the links exactly as signed
       filter: (p) => !SKIP_IN_APP.has(path.basename(p)),
     });
     const previous = readRecord(dest);
@@ -102,6 +103,7 @@ function launcherPathFor(manifest) {
 // With purge, also works for an app that was already uninstalled: its data and
 // publisher record may still be there.
 function uninstallApp(id, { purge = false } = {}) {
+  if (typeof id !== 'string' || !ID_RE.test(id)) throw new Error(`"${id}" is not an app id. "pane list" shows the installed apps.`);
   const dest = path.join(appsDir(), id);
   const record = readRecord(dest);
   const dataDir = path.join(paneHome(), 'data', id);

@@ -9,6 +9,7 @@
 //
 // PANE_HOME/publishers.json: { "<id>": { publicKey, name, since } | null }
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { paneHome } = require('../core/paths');
@@ -23,9 +24,28 @@ class PublisherError extends Error {
 
 const file = () => path.join(paneHome(), 'publishers.json');
 
+// Only a missing file means "nothing recorded". Anything else stops the
+// install: treating a damaged file as empty would forget every owner.
 function readAll() {
-  try { return JSON.parse(fs.readFileSync(file(), 'utf8')); } catch { return {}; }
+  let text;
+  try {
+    text = fs.readFileSync(file(), 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') return {};
+    throw new Error(`Could not read ${file()}: ${err.message}`);
+  }
+  let all;
+  try { all = JSON.parse(text); } catch { all = null; }
+  const valid = all && typeof all === 'object' && !Array.isArray(all)
+    && Object.values(all).every((r) => r === null || (r && typeof r.publicKey === 'string'));
+  if (!valid) throw new Error(`${file()} is damaged, so Pane cannot tell who owns each app. Fix or remove it, then try again.`);
+  return all;
 }
+
+const sameKey = (a, b) => {
+  const der = (pem) => crypto.createPublicKey(pem).export({ type: 'spki', format: 'der' });
+  return der(a).equals(der(b));
+};
 
 function writeAll(all) {
   fs.mkdirSync(paneHome(), { recursive: true });
@@ -48,7 +68,7 @@ function checkPublisher(id, signer) {
   if (!signer) {
     throw new PublisherError(`${id} is installed from a signed publisher (key ${fp}), and this copy is unsigned. Nothing was installed.`);
   }
-  if (signer.fingerprint !== fp) {
+  if (!sameKey(known.publicKey, signer.publicKey)) {
     throw new PublisherError(`${id} is installed from a different publisher (key ${fp}). This copy is signed with key ${signer.fingerprint}. `
       + `Nothing was installed. To replace it and delete its data, run: pane uninstall ${id} --purge`);
   }

@@ -14,7 +14,7 @@ const os = require('os');
 const path = require('path');
 const { spawn, execFileSync, spawnSync } = require('child_process');
 const { RUNTIME_ROOT, RUNTIME_VERSION, electronBinary } = require('../../src/core/paths');
-const { generateReleaseKey } = require('../../src/core/release-signature');
+const { generateReleaseKey, signRelease } = require('../../src/core/release-signature');
 const { readFuses, FUSE } = require('../../src/core/fuses');
 const { serveDir } = require('./lib/serve');
 const { waitForPage, connect, waitFor, randomPort, sleep } = require('./lib/cdp');
@@ -66,7 +66,18 @@ async function main() {
       fs.writeFileSync(file, bytes);
     });
     const unsignedDir = badDist('dist-unsigned', (dir) => fs.rmSync(path.join(dir, `${archiveName}.sig`)));
-    badServers.push(await serveDir(tamperedDir), await serveDir(unsignedDir));
+    // A real, signed Pane of another version under this version's name (an
+    // older release a mirror could serve).
+    const otherVersionDir = badDist('dist-other-version', (dir) => {
+      const unpacked = path.join(work, 'other-version');
+      fs.mkdirSync(unpacked);
+      execFileSync('tar', ['-xzf', path.join(dir, archiveName), '-C', unpacked]);
+      const pkgFile = path.join(unpacked, 'package.json');
+      fs.writeFileSync(pkgFile, fs.readFileSync(pkgFile, 'utf8').replace(`"version": "${RUNTIME_VERSION}"`, '"version": "0.0.1"'));
+      execFileSync('tar', ['-czf', path.join(dir, archiveName), '-C', unpacked, '.']);
+      fs.writeFileSync(path.join(dir, `${archiveName}.sig`), signRelease(fs.readFileSync(path.join(dir, archiveName)), releaseKey.privatePem));
+    });
+    badServers.push(await serveDir(tamperedDir), await serveDir(unsignedDir), await serveDir(otherVersionDir));
 
     const appDir = path.join(work, 'Field Notes');
     execFileSync(process.execPath, [CLI, 'create', appDir, '--name', 'Field Notes'], { env: baseEnv, stdio: 'pipe' });
@@ -87,13 +98,17 @@ async function main() {
       return output;
     };
     const paneFile = path.join(home, 'bin', WIN ? 'pane.cmd' : 'pane');
-    for (const [bad, what] of [[badServers[0], 'a changed Pane download'], [badServers[1], 'a Pane download without a signature']]) {
+    for (const [bad, what, why] of [
+      [badServers[0], 'a changed Pane download', /signature/i],
+      [badServers[1], 'a Pane download without a signature', /signature/i],
+      [badServers[2], 'a signed Pane of another version', /version 0\.0\.1/i],
+    ]) {
       const { code, output } = await installer({ ...userEnv, PANE_DIST_URL: bad.url });
       assert.notEqual(code, 0, `the installer accepted ${what}:\n${output}`);
-      assert.match(output, /signature/i, output);
+      assert.match(output, why, output);
       assert.ok(!fs.existsSync(paneFile), `nothing was installed from ${what}`);
     }
-    ok('the installer refuses a changed Pane download, and one without a signature');
+    ok('the installer refuses a changed Pane download, one without a signature, and a signed Pane of another version');
 
     const first = await runInstaller(userEnv);
     assert.match(first, /Downloading Pane|Pane is not installed|Installing Pane/i, first);

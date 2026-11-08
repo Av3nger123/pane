@@ -201,7 +201,7 @@ This writes `my-app/release/My App 0.1.0/`:
 2. If Pane is missing or older, the installer downloads that version from Pane's distribution server. It checks the download's signature against Pane's public keys, installs Pane next to any older versions, then installs and opens the app.
 3. If the signature is missing or doesn't match, the installer stops and installs nothing.
 
-The public keys come from `"pane.releaseKeys"` in Pane's `package.json` and are written into each installer when the app is built. Nothing on the user's computer can add a key, so a different download address (`PANE_DIST_URL`) can't change what gets installed.
+The public keys come from `"pane.releaseKeys"` in Pane's `package.json` and are written into each installer when the app is built. Nothing on the user's computer can add a key. The installer also checks that the download is the Pane version it asked for, so a different download address (`PANE_DIST_URL`) can only serve that exact Pane release.
 
 ### Where Pane is downloaded from: GitHub Releases
 
