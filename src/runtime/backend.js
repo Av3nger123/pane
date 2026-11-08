@@ -6,9 +6,11 @@
 //   { type: 'ready' }
 //   { type: 'result', id, ok: true, value } | { type: 'result', id, ok: false, error: { message, stack } }
 //   { type: 'emit', event, data }
+//   { type: 'request', id, api, args }      a Pane API (pane.updates in backends)
 // Pane -> backend:
 //   { type: 'call', id, method, args }
 //   { type: 'event', event, data }
+//   { type: 'response', id, ok, value | error }
 
 const fs = require('fs');
 const path = require('path');
@@ -144,9 +146,16 @@ class Backend extends EventEmitter {
       }
     } else if (msg.type === 'emit' && typeof msg.event === 'string') {
       this.emit('emit', { event: msg.event, data: msg.data });
+    } else if (msg.type === 'request' && typeof msg.api === 'string') {
+      this.emit('request', { id: msg.id, api: msg.api, args: msg.args });
     } else if (msg.type === 'ready') {
       this.emit('ready');
     }
+  }
+
+  respond(id, answer) {
+    if (!this.child) return;
+    try { this.child.postMessage({ type: 'response', id, ...answer }); } catch { /* not cloneable: the request times out */ }
   }
 
   failPending(err) {

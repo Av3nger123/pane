@@ -4,6 +4,8 @@
 //   2. a newer Pane (0.1.1) is announced; an app opens and quietly installs it
 //   3. the running app keeps working; its launcher moves when it next opens
 //   4. the pinned app stays on 0.1.0; a failed move still opens the app
+//   5. a signed app updates itself through pane.updates (check, download,
+//      restart into the new version); an unsigned app cannot
 // Run: npm run test:updates   (macOS or Windows)
 
 const assert = require('node:assert/strict');
@@ -158,6 +160,70 @@ async function main() {
     assert.ok(!fs.existsSync(path.join(home, 'runtime', '0.1.0')), 'Pane 0.1.0 was removed');
     assert.ok(fs.existsSync(path.join(home, 'runtime', '0.1.1', 'main.js')));
     ok('once no app uses Pane 0.1.0, the next check removes it');
+
+    // ---- An app updates itself through pane.updates --------------------------
+    const { generateAppKey, signApp } = require('../../src/core/app-signature');
+    const appKey = generateAppKey();
+    const appDist = path.join(dist, 'apps');
+    fs.mkdirSync(appDist, { recursive: true });
+    const updaterApp = (version, { key = appKey, id = 'updater' } = {}) => {
+      const dir = path.join(work, `${id}-${version}`);
+      fs.mkdirSync(path.join(dir, 'ui'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'ui', 'index.html'), `<!doctype html><title>${id}</title><p>${version}</p>`);
+      fs.writeFileSync(path.join(dir, 'backend.js'), "const pane = require('pane');\npane.expose('checkUpdate', () => pane.updates.check());\n");
+      fs.writeFileSync(path.join(dir, 'pane.json'), JSON.stringify({
+        id, name: id === 'updater' ? 'Updater' : 'Plain', version, backend: 'backend.js', updates: `${server.url}/apps/latest.json`,
+      }));
+      if (key) signApp(dir, { id, version, publisher: 'Test' }, key.privatePem);
+      return dir;
+    };
+    const v1 = await pane('install', updaterApp('0.1.0'));
+    assert.equal(v1.status, 0, v1.stderr);
+    installed.push('updater');
+    const v2 = updaterApp('0.2.0');
+    const macOnly = MAC ? ['--no-mac-metadata'] : [];
+    execFileSync('tar', [...macOnly, '-czf', path.join(appDist, 'updater-0.2.0.paneapp'), '-C', v2, ...fs.readdirSync(v2)], { env: { ...process.env, COPYFILE_DISABLE: '1' } });
+    fs.writeFileSync(path.join(appDist, 'latest.json'), JSON.stringify({ version: '0.2.0', url: `${server.url}/apps/updater-0.2.0.paneapp`, notes: 'New.' }));
+
+    app = open('updater');
+    c = await page();
+    assert.equal(await c.run('pane.app.version'), '0.1.0');
+    assert.deepEqual(await c.run('pane.updates.check()'), { available: true, version: '0.2.0', notes: 'New.' });
+    await c.run('window.__ready = []; window.__progress = 0; pane.updates.onReady((u) => window.__ready.push(u)); pane.updates.onProgress((p) => { window.__progress = p; }); true');
+    assert.deepEqual(await c.run('pane.updates.download()'), { version: '0.2.0' });
+    await waitFor(async () => (await c.run('window.__ready.length')) === 1, 'onReady');
+    assert.deepEqual(await c.run('window.__ready[0]'), { version: '0.2.0' });
+    assert.equal(record('updater').version, '0.1.0', 'nothing installs under the running app');
+    assert.ok(record('updater').pendingUpdate, 'the update waits for a restart');
+    ok('pane.updates: check finds 0.2.0, download verifies it and fires onReady; nothing changes while it runs');
+
+    await c.run('pane.updates.restartToUpdate(), true').catch(() => {});
+    c.close();
+    await waitFor(async () => {
+      try {
+        const target = await waitForPage(port, (t) => t.url.startsWith('pane-app://'), 'the app window', 5000);
+        const probe = await connect(target.webSocketDebuggerUrl);
+        const version = await probe.run('typeof pane === "object" ? pane.app.version : null');
+        probe.close();
+        return version === '0.2.0';
+      } catch { return false; }
+    }, 'the app to reopen as 0.2.0', 120000);
+    c = await page();
+    assert.deepEqual(await c.run('pane.call("checkUpdate")'), { available: false, version: '0.2.0', notes: 'New.' });
+    c.close();
+    assert.equal(record('updater').pendingUpdate, undefined);
+    ok('restartToUpdate reopened the app as 0.2.0; its backend\'s pane.updates.check() finds nothing newer');
+    await quitByPort(port);
+
+    const plain = await pane('install', updaterApp('0.1.0', { key: null, id: 'plain' }));
+    assert.equal(plain.status, 0, plain.stderr);
+    installed.push('plain');
+    app = open('plain');
+    c = await page();
+    await assert.rejects(c.run('pane.updates.check()'), /not signed, so it cannot update itself/);
+    c.close();
+    ok('an app installed unsigned cannot update itself');
+    await quit(app);
 
     console.log('\nAll update checks passed.');
   } catch (err) {

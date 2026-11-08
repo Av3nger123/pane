@@ -18,6 +18,7 @@ const CHANNELS = Object.freeze({
   NOTIFY: 'pane:notify',
   STORE: 'pane:store',
   SECRETS: 'pane:secrets',
+  UPDATES: 'pane:updates', // the app's own updates (check, download, installFile, restart)
   // runtime -> page
   EVENT: 'pane:event', // { event, data }: backend events and the runtime events below
   LOG: 'pane:log', // backend output during pane dev
@@ -31,6 +32,8 @@ const EVENTS = Object.freeze({
   NOTIFICATION_CLICK: 'pane:notification-click',
   BACKEND_EXIT: 'pane:backend-exit',
   BACKEND_RESTART: 'pane:backend-restart',
+  UPDATE_PROGRESS: 'pane:update-progress', // fraction 0..1 while an update downloads
+  UPDATE_READY: 'pane:update-ready', // { version }: installs on restart
 });
 
 module.exports = { CHANNELS, EVENTS };

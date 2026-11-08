@@ -23,6 +23,7 @@ const { Backend } = require('./backend');
 const { createWindowManager } = require('./windows');
 const { watchForDev } = require('./dev');
 const { wireIpc } = require('./ipc');
+const { createUpdates } = require('./ipc/updates');
 const { CHANNELS, EVENTS } = require('./ipc/channels');
 const { lockDownContents, applyPermissions } = require('./security');
 const { setupOpenRequests, registerProtocols } = require('./open');
@@ -102,8 +103,12 @@ function start() {
     applyPermissions(ses, manifest, isAppUrl);
 
     windows = createWindowManager(manifest, { dev: boot.dev, devUrl: boot.devUrl, isAppUrl });
-    wireIpc({ manifest, backend, windows, isAppUrl, dev: boot.dev, userData });
+    const appUpdates = createUpdates({
+      app, manifest, home: paneHome(), installed: Boolean(updates && updates.installed), dev: boot.dev, windows, backend,
+    });
+    wireIpc({ manifest, backend, windows, isAppUrl, dev: boot.dev, userData, updates: appUpdates });
     forwardBackendEvents(backend, windows);
+    answerBackendRequests(backend, { updates: appUpdates });
 
     if (process.platform === 'darwin' && boot.dev && manifest.icon) app.dock.setIcon(manifest.icon);
     registerProtocols(manifest, { dev: boot.dev });
@@ -136,6 +141,18 @@ function forwardBackendEvents(backend, windows) {
   }));
   backend.on('restart', () => windows.broadcast(CHANNELS.EVENT, { event: EVENTS.BACKEND_RESTART, data: null }));
   if (boot.dev) backend.on('log', (entry) => windows.broadcast(CHANNELS.LOG, entry));
+}
+
+// Pane APIs the backend asks for ({ type: 'request', api, args }).
+function answerBackendRequests(backend, apis) {
+  backend.on('request', async ({ id, api, args }) => {
+    try {
+      if (!Object.prototype.hasOwnProperty.call(apis, api)) throw new Error(`Unknown Pane API "${api}".`);
+      backend.respond(id, { ok: true, value: await apis[api](...(Array.isArray(args) ? args : [])) });
+    } catch (err) {
+      backend.respond(id, { ok: false, error: { message: err.message } });
+    }
+  });
 }
 
 start();

@@ -7,6 +7,7 @@
 //   pane.on('refresh', (data) => { ... });        // window: pane.send('refresh', data)
 //   pane.emit('progress', 0.5);                   // window: pane.on('progress', fn)
 //   pane.app.dataDir                              // private folder that survives updates
+//   await pane.updates.check()                    // the app's own updates (installed apps)
 
 const fs = require('fs');
 
@@ -23,6 +24,8 @@ function createBackend() {
   const handlers = new Map();
   const listeners = new Map();
   const queue = [];
+  const requests = new Map();
+  let nextRequest = 1;
   let ready = false;
 
   const app = Object.freeze({
@@ -58,6 +61,27 @@ function createBackend() {
     if (typeof event !== 'string') throw new TypeError('pane.emit(event, data)');
     post({ type: 'emit', event, data });
   }
+
+  // A Pane API, answered by the app's main process.
+  function request(api, args) {
+    if (!port) return Promise.reject(new Error('This only works inside a Pane app.'));
+    const id = nextRequest++;
+    return new Promise((resolve, reject) => {
+      requests.set(id, { resolve, reject });
+      port.postMessage({ type: 'request', id, api, args });
+    });
+  }
+
+  const UPDATE_PROGRESS = 'pane:update-progress';
+  const UPDATE_READY = 'pane:update-ready';
+  const updates = Object.freeze({
+    check: () => request('updates', ['check']),
+    download: () => request('updates', ['download']),
+    installFile: (file) => request('updates', ['installFile', file]),
+    restartToUpdate: () => { request('updates', ['restart']).catch((err) => console.error(err)); },
+    onProgress: (fn) => on(UPDATE_PROGRESS, fn),
+    onReady: (fn) => on(UPDATE_READY, fn),
+  });
 
   function post(msg) {
     if (!port) return; // loaded outside Pane (e.g. in a unit test)
@@ -97,6 +121,14 @@ function createBackend() {
     port.on('message', (e) => {
       const msg = e.data;
       if (!msg || typeof msg !== 'object') return;
+      if (msg.type === 'response') {
+        const r = requests.get(msg.id);
+        if (!r) return;
+        requests.delete(msg.id);
+        if (msg.ok) r.resolve(msg.value);
+        else r.reject(new Error((msg.error && msg.error.message) || 'Pane could not do that.'));
+        return;
+      }
       if (ready) handle(msg);
       else queue.push(msg);
     });
@@ -110,5 +142,5 @@ function createBackend() {
     for (const msg of queue.splice(0)) handle(msg);
   }
 
-  return { app, expose, on, emit, _ready };
+  return { app, expose, on, emit, updates, _ready };
 }
