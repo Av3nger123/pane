@@ -18,7 +18,7 @@ if (boot.home) process.env.PANE_HOME = boot.home; // before anything reads Pane'
 
 const { loadManifest } = require('../core/manifest');
 const { satisfies } = require('../core/version');
-const { RUNTIME_VERSION, dataDir } = require('../core/paths');
+const { RUNTIME_VERSION, dataDir, paneHome } = require('../core/paths');
 const { Backend } = require('./backend');
 const { createWindowManager } = require('./windows');
 const { watchForDev } = require('./dev');
@@ -26,6 +26,7 @@ const { wireIpc } = require('./ipc');
 const { CHANNELS, EVENTS } = require('./ipc/channels');
 const { lockDownContents, applyPermissions } = require('./security');
 const { setupOpenRequests, registerProtocols } = require('./open');
+const { startUpdates } = require('./updates');
 
 // Exit code that tells `pane dev` to start the app again (pane.json changed).
 const EXIT_RESTART = 75;
@@ -72,6 +73,11 @@ function start() {
   // One running copy per app: opening it again focuses the existing window
   // (and hands over any link or file it was opened with, see open.js).
   if (!app.requestSingleInstanceLock()) { app.quit(); return; }
+
+  // Installed apps: hand over to the pane command if Pane moved on since the
+  // last start; otherwise look for a newer Pane later (quietly).
+  const updates = boot.openOnly ? null : startUpdates({ app, manifest, home: paneHome(), dev: boot.dev });
+  if (updates && updates.pendingRelaunch) { app.exit(0); return; }
   if (boot.openOnly && boot.dev && manifest.dev && !boot.devUrl) {
     return fail(`${manifest.name} is not running`, `Start it first with: pane dev ${manifest.dir}`);
   }
@@ -103,6 +109,7 @@ function start() {
     registerProtocols(manifest, { dev: boot.dev });
     backend.start();
     windows.open({ main: true });
+    if (updates) updates.scheduleCheck();
 
     if (boot.dev) {
       if (boot.devUrl) console.log(`[pane] loading ${boot.devUrl} (dev server)`);

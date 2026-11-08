@@ -255,3 +255,59 @@ test('moveAppsOnto: moves idle apps, waits for running ones, keeps pinned ones',
     }
   });
 });
+
+// ---- Handing over to a new Pane happens at most once ----------------------
+// (A relaunch loop once took over the owner's Mac: the app kept quitting and
+// reopening. None of these tests open a window.)
+
+test('an app reopened by Pane never hands over again', () => {
+  const { shouldHandOver, REOPENED_FLAG } = require('../../src/runtime/updates');
+  const pending = { pendingRuntime: '/pane/runtime/0.1.1' };
+  assert.equal(shouldHandOver(pending, { argv: ['/x/App'], runtimeRoot: '/pane/runtime/0.1.0' }), true);
+  assert.equal(shouldHandOver(pending, { argv: ['/x/App', REOPENED_FLAG], runtimeRoot: '/pane/runtime/0.1.0' }), false);
+  assert.equal(shouldHandOver(pending, { argv: ['/x/App'], runtimeRoot: '/pane/runtime/0.1.1' }), false, 'already on it');
+  assert.equal(shouldHandOver({ pendingUpdate: '/u.paneapp' }, { argv: ['/x/App', REOPENED_FLAG], runtimeRoot: '/r' }), false);
+  assert.equal(shouldHandOver({}, { argv: ['/x/App'], runtimeRoot: '/r' }), false);
+});
+
+test('reopen arguments mark the app and keep its own arguments once', () => {
+  const { reopenArgs, REOPENED_FLAG } = require('../../src/packaging/apps');
+  assert.deepEqual(reopenArgs(['notes://a', '--remote-debugging-port=9']), ['notes://a', '--remote-debugging-port=9', REOPENED_FLAG]);
+  assert.deepEqual(reopenArgs([REOPENED_FLAG, 'x']), ['x', REOPENED_FLAG]);
+  assert.equal(REOPENED_FLAG, require('../../src/runtime/updates').REOPENED_FLAG);
+});
+
+test('launcher-refresh clears pending moves even when the move fails, and never runs twice at once', { skip: process.platform === 'win32' }, async () => {
+  const sandbox = tmp('pane-refresh-');
+  await withEnv({ PANE_HOME: path.join(sandbox, 'home'), PANE_LAUNCHERS_DIR: path.join(sandbox, 'launchers'), PANE_LAUNCHER_SIGNING: 'adhoc' }, async () => {
+    const { installApp, uninstallApp, readRecord, writeRecord } = require('../../src/packaging/apps');
+    const { launcherRefresh } = require('../../src/cli/commands/launcher-refresh');
+    const { takeLock } = require('../../src/core/update-state');
+    const dir = path.join(sandbox, 'app');
+    fs.mkdirSync(path.join(dir, 'ui'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'pane.json'), '{"id":"refresh-check","name":"Refresh Check"}');
+    fs.writeFileSync(path.join(dir, 'ui', 'index.html'), '');
+    const appHome = path.join(process.env.PANE_HOME, 'apps', 'refresh-check');
+    try {
+      installApp(dir);
+      const before = readRecord(appHome);
+      writeRecord(appHome, { ...before, pendingRuntime: path.join(process.env.PANE_HOME, 'runtime', '9.9.9') });
+      assert.equal(await launcherRefresh('refresh-check', {}), 0);
+      const after = readRecord(appHome);
+      assert.equal(after.pendingRuntime, undefined, 'the pending move is cleared even though it failed');
+      assert.equal(after.runtimeDir, before.runtimeDir);
+      assert.match(fs.readFileSync(path.join(process.env.PANE_HOME, 'logs', 'update.log'), 'utf8'), /could not move/);
+
+      writeRecord(appHome, { ...after, pendingRuntime: '/elsewhere' });
+      const release = takeLock('app-refresh-check');
+      try {
+        assert.equal(await launcherRefresh('refresh-check', { open: true }), 0, 'another refresh is running: this one does nothing');
+        assert.equal(readRecord(appHome).pendingRuntime, '/elsewhere');
+      } finally {
+        release();
+      }
+    } finally {
+      try { uninstallApp('refresh-check', { purge: true }); } catch { /* not installed */ }
+    }
+  });
+});

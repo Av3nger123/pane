@@ -63,3 +63,4 @@ jobs:
       - run: npm ci
       - run: npm run test:installers
       - run: npm run test:signing
+      - run: npm run test:updates

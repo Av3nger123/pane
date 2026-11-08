@@ -8,6 +8,11 @@ const path = require('path');
 const { paneHome } = require('./paths');
 
 const DAY = 24 * 3600 * 1000;
+
+// Added to the arguments of an app that Pane reopens after moving it onto a
+// new Pane (or installing its update). An app started with it never hands
+// over again, so a failed move costs one restart, never a loop.
+const REOPENED_FLAG = '--pane-reopened';
 const STALE_LOCK = 30 * 60 * 1000;
 
 const stampFile = () => path.join(paneHome(), 'update-check.json');
@@ -57,4 +62,4 @@ function takeLock(name) {
   return null;
 }
 
-module.exports = { updateDue, markChecked, takeLock, alive };
+module.exports = { updateDue, markChecked, takeLock, alive, REOPENED_FLAG };

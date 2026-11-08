@@ -41,7 +41,7 @@ Usage:
   pane version
 `;
 
-const VALUE_FLAGS = new Set(['name', 'out', 'template', 'key', 'expect']);
+const VALUE_FLAGS = new Set(['name', 'out', 'template', 'key', 'expect', 'after']);
 
 function parseArgs(argv) {
   const positional = [];
@@ -80,6 +80,7 @@ function main() {
     case 'list': return command('list').list();
     case 'setup': return command('setup').setup(flags);
     case 'self-update': return command('self-update').selfUpdateCommand(flags);
+    case 'launcher-refresh': return command('launcher-refresh').launcherRefresh(positional[0], flags, extra);
     case 'pack-runtime': return command('pack-runtime').packRuntimeCommand(flags);
     case 'keygen': return command('keygen').keygen(positional[0], flags);
     case 'version': case '--version': case '-v':

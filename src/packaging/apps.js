@@ -10,6 +10,7 @@ const { satisfies } = require('../core/version');
 const { createLauncher, removeLauncher, fileName } = require('./launchers');
 const { verifyApp, AppSignatureError } = require('../core/app-signature');
 const { runningApps } = require('../core/running');
+const { REOPENED_FLAG } = require('../core/update-state');
 const { runtimeVersionOf } = require('./runtime');
 const {
   checkPublisher, recordPublisher, forgetPublisher, publisherOf,
@@ -182,11 +183,33 @@ function moveAppsOnto(runtimeDir) {
   });
 }
 
+// The app's own arguments, plus the mark that stops it handing over again.
+const reopenArgs = (args = []) => [...args.filter((a) => a !== REOPENED_FLAG), REOPENED_FLAG];
+
+// Reopens an installed app as its launcher does, with its arguments (a link,
+// a file, Chromium flags) and the reopened mark.
+function openInstalledApp(record, extra = []) {
+  const args = reopenArgs(extra);
+  const { spawn } = require('child_process');
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  let child;
+  if (process.platform === 'darwin') {
+    child = spawn('open', [record.launcher, '--args', ...args], { env, detached: true, stdio: 'ignore' });
+  } else {
+    const { electronBinary } = require('../core/paths');
+    child = spawn(electronBinary(record.runtimeDir), [path.join(record.runtimeDir, 'main.js'), `--app=${path.join(appsDir(), record.id)}`, ...args],
+      { env, detached: true, stdio: 'ignore', windowsHide: false });
+  }
+  child.on('error', () => {});
+  child.unref();
+}
+
 function writeRecord(dir, record) {
   fs.writeFileSync(path.join(dir, RECORD), `${JSON.stringify(record, null, 2)}\n`);
 }
 
 module.exports = {
-  moveAppsOnto, refreshLauncher, readRecord, writeRecord,
+  moveAppsOnto, refreshLauncher, readRecord, writeRecord, openInstalledApp, reopenArgs, REOPENED_FLAG,
   installApp, uninstallApp, listApps, launcherPathFor, SKIP_IN_APP, EXIT_NEEDS_NEWER_PANE,
 };
