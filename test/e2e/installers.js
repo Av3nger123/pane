@@ -114,6 +114,38 @@ async function main() {
     pane('uninstall', manifest.id);
     installedId = null;
     assert.equal(fs.readdirSync(launchers).length, 0, 'the launcher is gone');
+
+    // The app id belongs to the key that first installed it. Its data is
+    // kept after a plain uninstall, so another publisher's app is refused
+    // until --purge removes both.
+    if (MAC) {
+      const keys = path.join(work, 'keys');
+      const signedBy = (name) => {
+        const file = path.join(keys, `${name}.pem`);
+        if (!fs.existsSync(file)) execFileSync(process.execPath, [CLI, 'keygen', file], { env: baseEnv, stdio: 'pipe' });
+        execFileSync(process.execPath, [CLI, 'build', appDir, '--key', file], { env: { ...baseEnv, PANE_DIST_URL: server.url }, stdio: 'pipe' });
+        return path.join(release, `${manifest.id}-0.1.0.paneapp`);
+      };
+      const installPkg = (pkg) => spawnSync(paneCmd[0], ['install', pkg], { env: userEnv, encoding: 'utf8' });
+      const first = installPkg(signedBy('a'));
+      assert.equal(first.status, 0, first.stderr);
+      installedId = manifest.id;
+      assert.match(first.stdout, /publisher: unnamed \(key [0-9a-f]{4} /);
+      assert.match(first.stdout, /permissions: none/);
+      pane('uninstall', manifest.id);
+      installedId = null;
+      const other = installPkg(signedBy('b'));
+      assert.equal(other.status, 1, other.stdout);
+      assert.match(other.stderr, /different publisher/);
+      assert.ok(!fs.existsSync(appHome), 'nothing was installed');
+      pane('uninstall', manifest.id, '--purge');
+      const replaced = installPkg(signedBy('b'));
+      assert.equal(replaced.status, 0, replaced.stderr);
+      installedId = manifest.id;
+      pane('uninstall', manifest.id, '--purge');
+      installedId = null;
+      ok('an app id belongs to the key that first installed it, until --purge');
+    }
     if (WIN) {
       for (const key of [`HKCU\\Software\\Classes\\field-notes`, `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Pane.${manifest.id}`]) {
         assert.notEqual(spawnSync('reg', ['query', key]).status, 0, `${key} was removed`);

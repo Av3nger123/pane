@@ -130,3 +130,39 @@ test('fingerprint format', () => {
   assert.equal(fingerprint(appKeyA.publicPem), fp);
   assert.notEqual(fingerprint(appKeyB.publicPem), fp);
 });
+
+// ---- Who owns an app id ---------------------------------------------------
+
+test('publishers: the first install decides, purge forgets', () => {
+  const saved = process.env.PANE_HOME;
+  process.env.PANE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'pane-home-'));
+  try {
+    const { checkPublisher, recordPublisher, forgetPublisher, publisherOf } = require('../../src/packaging/publishers');
+    const signer = (key, name) => ({ publicKey: key.publicPem, fingerprint: fingerprint(key.publicPem), publisher: name });
+    const A = signer(appKeyA, 'Acme');
+    const B = signer(appKeyB, 'Other');
+
+    checkPublisher('notes', null);
+    recordPublisher('notes', null);
+    assert.equal(publisherOf('notes'), null);
+    checkPublisher('notes', A); // unsigned, then signed: the key is recorded
+    recordPublisher('notes', A);
+    assert.equal(publisherOf('notes').name, 'Acme');
+
+    checkPublisher('notes', A);
+    assert.throws(() => checkPublisher('notes', B), (e) => e.code === 'PUBLISHER_CHANGED' && /different publisher/.test(e.message) && /--purge/.test(e.message));
+    assert.throws(() => checkPublisher('notes', null), (e) => e.code === 'PUBLISHER_CHANGED' && /unsigned/.test(e.message));
+    recordPublisher('notes', B); // never replaces a recorded key
+    assert.equal(publisherOf('notes').name, 'Acme');
+
+    forgetPublisher('notes');
+    assert.equal(publisherOf('notes'), undefined);
+    checkPublisher('notes', B);
+    if (process.platform !== 'win32') {
+      recordPublisher('other', A);
+      assert.equal(fs.statSync(path.join(process.env.PANE_HOME, 'publishers.json')).mode & 0o777, 0o600);
+    }
+  } finally {
+    if (saved === undefined) delete process.env.PANE_HOME; else process.env.PANE_HOME = saved;
+  }
+});
