@@ -6,8 +6,10 @@
 //   [app.paneapp][payload length: 8 bytes]["PANESET1"]
 //
 // It installs Pane first when the computer lacks the version the app was built
-// with (downloaded from Pane's distribution, checked against its SHA-256),
-// then installs the app with Pane's own command and opens it.
+// with (downloaded from Pane's distribution, and refused unless its .sig
+// verifies against one of Pane's public keys, which `pane build` puts in the
+// config as releaseKeys=<n>.<e>,...), then installs the app with Pane's own
+// command and opens it.
 //
 // Written for the C# 5 compiler that ships with Windows (csc.exe in
 // %WINDIR%\Microsoft.NET\Framework64\v4.0.30319), so no SDK is needed.
@@ -122,7 +124,7 @@ static class PaneSetup
                 File.WriteAllBytes(package, paneapp);
 
                 if (File.Exists(pane)) Status("Pane is already installed.");
-                else InstallPane(version, dist, work, name);
+                else InstallPane(version, dist, work, name, Get(config, "releaseKeys", ""));
 
                 Status("Installing " + name + "…");
                 string output;
@@ -130,7 +132,7 @@ static class PaneSetup
                 if (code == ExitNeedsNewerPane)
                 {
                     Status(name + " needs a newer Pane.");
-                    InstallPane(version, dist, work, name);
+                    InstallPane(version, dist, work, name, Get(config, "releaseKeys", ""));
                     code = RunPane(pane, package, out output);
                 }
                 if (code != 0) return Fail(name + " could not be installed." + Environment.NewLine + Environment.NewLine + output.Trim());
@@ -152,12 +154,15 @@ static class PaneSetup
         }
     }
 
-    // Downloads the Pane version the app was built with, checks it, installs it.
-    static void InstallPane(string version, string dist, string work, string name)
+    // Downloads the Pane version the app was built with, checks its signature,
+    // installs it.
+    static void InstallPane(string version, string dist, string work, string name, string releaseKeys)
     {
         if (version == "") throw new Exception("This installer does not say which Pane version it needs.");
         if (dist == "")
             throw new Exception(name + " needs Pane " + version + ", and this installer does not know where to download it.");
+        if (releaseKeys == "")
+            throw new Exception(name + "'s installer has no key to check Pane's download, so it will not download Pane.");
         bool local = dist.StartsWith("http://127.0.0.1", StringComparison.OrdinalIgnoreCase)
                   || dist.StartsWith("http://localhost", StringComparison.OrdinalIgnoreCase);
         if (!dist.StartsWith("https://", StringComparison.OrdinalIgnoreCase) && !local)
@@ -169,15 +174,21 @@ static class PaneSetup
         string archive = Path.Combine(work, file);
 
         Download(url, archive, "Downloading Pane " + version);
-        string sums;
-        using (var client = new WebClient()) sums = client.DownloadString(url + ".sha256");
-        string expected = sums.Trim().Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries)[0].ToLowerInvariant();
-        string actual;
+        byte[] signature;
+        try
+        {
+            using (var client = new WebClient()) signature = client.DownloadData(url + ".sig");
+        }
+        catch (WebException)
+        {
+            throw new Exception("Could not download Pane's signature from " + url + ".sig. Nothing was installed.");
+        }
+        byte[] hash;
         using (var sha = SHA256.Create())
         using (var stream = File.OpenRead(archive))
-            actual = BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
-        if (expected.Length != 64 || expected != actual)
-            throw new Exception("The Pane download is damaged or was changed (checksum mismatch). Nothing was installed.");
+            hash = sha.ComputeHash(stream);
+        if (!VerifyRelease(hash, signature, releaseKeys))
+            throw new Exception("The Pane download is not signed by Pane (signature check failed). Nothing was installed.");
 
         Status("Installing Pane " + version + "…");
         Marquee();
@@ -265,6 +276,37 @@ static class PaneSetup
             if (t.StartsWith("launcher:", StringComparison.Ordinal)) return t.Substring("launcher:".Length).Trim();
         }
         return null;
+    }
+
+    // keys: "<n>.<e>,<n>.<e>" (RSA modulus and exponent, base64url). True when
+    // any key verifies the RSA PKCS#1 v1.5 SHA-256 signature over the hash.
+    static bool VerifyRelease(byte[] sha256, byte[] signature, string keys)
+    {
+        foreach (string key in keys.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            string[] parts = key.Split('.');
+            if (parts.Length != 2) continue;
+            try
+            {
+                using (var rsa = new RSACryptoServiceProvider())
+                {
+                    rsa.ImportParameters(new RSAParameters { Modulus = Base64Url(parts[0]), Exponent = Base64Url(parts[1]) });
+                    if (rsa.VerifyHash(sha256, CryptoConfig.MapNameToOID("SHA256"), signature)) return true;
+                }
+            }
+            catch (CryptographicException e)
+            {
+                Log("release key check failed: " + e.Message);
+            }
+        }
+        return false;
+    }
+
+    static byte[] Base64Url(string s)
+    {
+        string b = s.Replace('-', '+').Replace('_', '/');
+        switch (b.Length % 4) { case 2: b += "=="; break; case 3: b += "="; break; }
+        return Convert.FromBase64String(b);
     }
 
     static void ReadPayload(out Dictionary<string, string> config, out byte[] paneapp)

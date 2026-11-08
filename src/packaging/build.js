@@ -77,7 +77,7 @@ async function buildInstaller(appDir, { out } = {}) {
 
     // Windows: PaneSetup.exe with the app attached (from any OS, once the
     // compiled PaneSetup.exe is available).
-    const exe = writeSetupExe({ manifest, pkg, pkgName, outDir, dist });
+    const exe = writeSetupExe({ manifest, pkg, pkgName, outDir, dist, releaseKeys: keys });
     if (exe) installers.push(exe);
     else {
       warnings.push('No Windows installer (.exe): it needs the compiled PaneSetup.exe, which Pane releases include. '
