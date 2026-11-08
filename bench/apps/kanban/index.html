@@ -1,0 +1,37 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Kanban</title><link rel="stylesheet" href="shared.css">
+<style>
+body { display: flex; flex-direction: column; } header { padding: 10px 14px; display: flex; gap: 8px; } header input { flex: 1; }
+.board { flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 0 14px 14px; min-height: 0; }
+.col { background: color-mix(in srgb, var(--line) 40%, transparent); border-radius: 10px; padding: 10px; overflow: auto; }
+.col h2 { font-size: 13px; margin: 0 0 8px; color: var(--muted); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; cursor: grab; }
+.col.over { outline: 2px dashed var(--accent); }
+</style></head><body>
+<header><input id="t" placeholder="New task"><button id="add" class="primary">Add</button></header>
+<div class="board" id="board"></div>
+<script>
+const KEY = 'bench-kanban', COLS = ['To do', 'Doing', 'Done'];
+let cards = JSON.parse(localStorage.getItem(KEY) || 'null') || Array.from({ length: 30 }, (_, i) => ({ id: i, text: `Task ${i + 1}: ship something small`, col: i % 3 }));
+const save = () => localStorage.setItem(KEY, JSON.stringify(cards));
+function render() {
+  const board = document.getElementById('board');
+  board.replaceChildren(...COLS.map((name, c) => {
+    const col = document.createElement('div');
+    col.className = 'col';
+    col.innerHTML = `<h2>${name} · ${cards.filter((x) => x.col === c).length}</h2>`;
+    col.ondragover = (e) => { e.preventDefault(); col.classList.add('over'); };
+    col.ondragleave = () => col.classList.remove('over');
+    col.ondrop = (e) => { const card = cards.find((x) => x.id === Number(e.dataTransfer.getData('text'))); card.col = c; save(); render(); };
+    for (const card of cards.filter((x) => x.col === c)) {
+      const el = document.createElement('div');
+      el.className = 'card'; el.draggable = true; el.textContent = card.text;
+      el.ondragstart = (e) => e.dataTransfer.setData('text', String(card.id));
+      el.ondblclick = () => { cards = cards.filter((x) => x !== card); save(); render(); };
+      col.append(el);
+    }
+    return col;
+  }));
+}
+document.getElementById('add').onclick = () => { const t = document.getElementById('t'); if (!t.value) return; cards.push({ id: Date.now(), text: t.value, col: 0 }); t.value = ''; save(); render(); };
+render();
+</script></body></html>
