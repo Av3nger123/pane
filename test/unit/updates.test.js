@@ -346,6 +346,41 @@ test('cleanupRuntimes removes only Panes nothing uses', () => withEnv({ PANE_HOM
   for (const kept of [r100, r110, r080]) assert.ok(fs.existsSync(kept), `${path.basename(kept)} is kept`);
 }));
 
+test('cleanupRuntimes keeps a Pane referenced through another path to the same folder', () => {
+  // macOS: /var is a link to /private/var, so an app's record may hold
+  // /private/var/... while PANE_HOME says /var/... (or the reverse).
+  const real = tmp('pane-real-');
+  const link = path.join(tmp('pane-link-'), 'home');
+  fs.symlinkSync(real, link, 'dir');
+  return withEnv({ PANE_HOME: link }, () => {
+    const { cleanupRuntimes } = require('../../src/packaging/runtime');
+    const runtime = (v) => {
+      const dir = path.join(link, 'runtime', v);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'main.js'), '');
+      return dir;
+    };
+    const used = runtime('0.1.0');
+    const unused = runtime('0.0.9');
+    fs.writeFileSync(path.join(link, 'runtime', 'current'), `${runtime('0.1.1')}\n`);
+    fs.mkdirSync(path.join(link, 'apps', 'a'), { recursive: true });
+    fs.writeFileSync(path.join(link, 'apps', 'a', '.pane-install.json'),
+      JSON.stringify({ id: 'a', runtimeDir: fs.realpathSync(used) })); // the real path
+    assert.deepEqual(cleanupRuntimes(), ['0.0.9']);
+    assert.ok(fs.existsSync(path.join(used, 'main.js')), 'the Pane an app uses is kept');
+    assert.ok(!fs.existsSync(unused));
+  });
+});
+
+test('an app already on its pending Pane, named another way, does not hand over', () => {
+  const { shouldHandOver } = require('../../src/runtime/updates');
+  const real = tmp('pane-real-');
+  const link = path.join(tmp('pane-link-'), 'runtime');
+  fs.symlinkSync(real, link, 'dir');
+  assert.equal(shouldHandOver({ pendingRuntime: link }, { argv: [], runtimeRoot: real }), false);
+  assert.equal(shouldHandOver({ pendingRuntime: tmp('pane-other-') }, { argv: [], runtimeRoot: real }), true);
+});
+
 test('app updates: check, download, stage, apply, and every refusal', { skip: process.platform === 'win32' }, async () => {
   const { generateAppKey, signApp } = require('../../src/core/app-signature');
   const { RUNTIME_ROOT } = require('../../src/core/paths');

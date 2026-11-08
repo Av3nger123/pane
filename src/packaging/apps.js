@@ -15,7 +15,7 @@ const { runtimeVersionOf } = require('./runtime');
 const {
   checkPublisher, recordPublisher, forgetPublisher, publisherOf,
 } = require('./publishers');
-const { RUNTIME_ROOT, RUNTIME_VERSION, paneHome, appsDir, launchersDir } = require('../core/paths');
+const { RUNTIME_ROOT, RUNTIME_VERSION, paneHome, appsDir, launchersDir, samePath } = require('../core/paths');
 
 const RECORD = '.pane-install.json';
 // Never copied when installing or packaging an app. `release` is where
@@ -182,7 +182,7 @@ function moveAppsOnto(runtimeDir) {
     const dest = path.join(appsDir(), record.id);
     let manifest;
     try { manifest = loadManifest(dest); } catch { return { id: record.id, result: 'kept' }; }
-    if (record.runtimeDir === runtimeDir || !satisfies(version, manifest.pane)) return { id: record.id, result: 'kept' };
+    if (samePath(record.runtimeDir, runtimeDir) || !satisfies(version, manifest.pane)) return { id: record.id, result: 'kept' };
     if (running.has(record.id)) {
       writeRecord(dest, { ...record, pendingRuntime: runtimeDir });
       return { id: record.id, result: 'pending' };

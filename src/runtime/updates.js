@@ -13,7 +13,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const { RUNTIME_ROOT, appsDir } = require('../core/paths');
+const { RUNTIME_ROOT, appsDir, samePath } = require('../core/paths');
 const { updateDue, logUpdate, REOPENED_FLAG } = require('../core/update-state');
 const { markRunning, clearRunning } = require('../core/running');
 
@@ -87,7 +87,7 @@ function openArgs() {
 // update waits), and never if Pane itself just reopened this app.
 function shouldHandOver(record, { argv = process.argv, runtimeRoot = RUNTIME_ROOT } = {}) {
   if (!record || argv.includes(REOPENED_FLAG)) return false;
-  return Boolean((record.pendingRuntime && record.pendingRuntime !== runtimeRoot) || record.pendingUpdate);
+  return Boolean((record.pendingRuntime && !samePath(record.pendingRuntime, runtimeRoot)) || record.pendingUpdate);
 }
 
 // { pendingRelaunch, scheduleCheck() }

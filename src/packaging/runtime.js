@@ -181,19 +181,22 @@ function cleanupRuntimes() {
   const root = runtimesDir();
   let names = [];
   try { names = fs.readdirSync(root); } catch { return []; }
-  const keep = new Set([path.resolve(RUNTIME_ROOT)]);
+  // Real paths: the same folder can be named two ways (on macOS /var is a
+  // link to /private/var), and a Pane in use must never look unused.
+  const same = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+  const keep = new Set([same(RUNTIME_ROOT)]);
   const current = installedRuntime();
-  if (current) keep.add(path.resolve(current));
+  if (current) keep.add(same(current));
   const { appsDir } = require('../core/paths');
   let apps = [];
   try { apps = fs.readdirSync(appsDir()); } catch { /* none */ }
   for (const id of apps) {
     try {
       const record = JSON.parse(fs.readFileSync(path.join(appsDir(), id, '.pane-install.json'), 'utf8'));
-      for (const dir of [record.runtimeDir, record.pendingRuntime]) if (dir) keep.add(path.resolve(dir));
+      for (const dir of [record.runtimeDir, record.pendingRuntime]) if (dir) keep.add(same(dir));
     } catch { /* not an installed app */ }
   }
-  for (const entry of require('../core/running').runningApps()) if (entry.runtimeDir) keep.add(path.resolve(entry.runtimeDir));
+  for (const entry of require('../core/running').runningApps()) if (entry.runtimeDir) keep.add(same(entry.runtimeDir));
 
   const removed = [];
   for (const name of names) {
@@ -203,7 +206,7 @@ function cleanupRuntimes() {
     if (!stat.isDirectory()) continue;
     if (name.endsWith('.partial')) {
       if (Date.now() - stat.mtimeMs < 3600e3) continue;
-    } else if (!fs.existsSync(path.join(dir, 'main.js')) || keep.has(path.resolve(dir))) {
+    } else if (!fs.existsSync(path.join(dir, 'main.js')) || keep.has(same(dir))) {
       continue;
     }
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
