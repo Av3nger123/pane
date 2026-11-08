@@ -91,6 +91,15 @@ test('manifest: missing files and bad JSON', () => {
   assert.throws(() => loadManifest(tmpApp({ 'pane.json': '{"id":"a","name":"A","backend":"b.js"}', 'ui/index.html': '' })), /backend file "b.js" does not exist/);
 });
 
+test('manifest: publisher', () => {
+  const app = (publisher) => tmpApp({ 'pane.json': JSON.stringify({ id: 'a', name: 'A', publisher }), 'ui/index.html': '' });
+  assert.equal(loadManifest(app('Acme')).publisher, 'Acme');
+  assert.equal(loadManifest(app(undefined)).publisher, null);
+  assert.throws(() => loadManifest(app('')), /"publisher" must be text of 1–100 characters/);
+  assert.throws(() => loadManifest(app('x'.repeat(101))), /"publisher" must be text of 1–100 characters/);
+  assert.throws(() => loadManifest(app('Acme\nInc')), /"publisher"/);
+});
+
 const PANE_DEP = { name: 'pane-runtime', spec: '^0.1.0' };
 
 test('every template produces a valid app, with and without a backend', () => {

@@ -10,6 +10,7 @@
 //   "start": "index.html",            first page, inside "ui"
 //   "backend": "backend/main.js",     optional Node file, runs on Pane's Node
 //   "icon": "icon.png",               optional, square PNG (512 px or more)
+//   "publisher": "Acme",              optional, shown at install next to the signing key
 //   "window": { "width": 960, "height": 640, "minWidth": 400, "minHeight": 300,
 //               "titleBar": "default" | "hidden",
 //               "background": "#ffffff" or { "light": "#ffffff", "dark": "#1e1e1e" } },
@@ -132,6 +133,13 @@ function normalizeManifest(data, dir, { requireUi = true } = {}) {
     }
   }
 
+  let publisher = null;
+  if (data.publisher !== undefined && data.publisher !== null) {
+    if (typeof data.publisher !== 'string' || !/^[^\u0000-\u001f\u007f]{1,100}$/.test(data.publisher)) {
+      errors.push('"publisher" must be text of 1–100 characters.');
+    } else publisher = data.publisher;
+  }
+
   const protocols = checkProtocols(data.protocols, errors);
   const fileTypes = checkFileTypes(data.fileTypes, errors);
   const dev = command('dev', data.dev, errors, { needsUrl: true });
@@ -144,6 +152,7 @@ function normalizeManifest(data, dir, { requireUi = true } = {}) {
   return Object.freeze({
     dir, id, name, version, pane,
     description: str(data.description) || '',
+    publisher,
     ui, uiDir, start: start.replace(/\\/g, '/').replace(/^\/+/, ''),
     backend, icon,
     window: Object.freeze(win),
