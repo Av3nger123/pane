@@ -234,6 +234,7 @@ async function main() {
       const rec = path.join(home, 'apps', id, '.pane-install.json');
       if (fs.existsSync(rec)) console.error(`--- ${id} record ---\n${fs.readFileSync(rec, 'utf8')}`);
     }
+    for (const { pid, text } of appOutput) console.error(`--- app ${pid} output ---\n${text.slice(-3000)}`);
     try { console.error(`--- locks ---\n${fs.readdirSync(path.join(home, 'locks')).join('\n')}`); } catch { /* none */ }
     process.exitCode = 1;
   } finally {
@@ -265,12 +266,22 @@ function launch(record, port, env) {
   if (MAC) {
     const plist = path.join(record.launcher, 'Contents', 'Info.plist');
     const exe = execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleExecutable', plist], { encoding: 'utf8' }).trim();
-    return spawn(path.join(record.launcher, 'Contents', 'MacOS', exe), extra, { env, stdio: 'ignore' });
+    return capture(spawn(path.join(record.launcher, 'Contents', 'MacOS', exe), extra, { env, stdio: ['ignore', 'pipe', 'pipe'] }));
   }
   const { runWinHelper } = require('../../src/packaging/launchers');
   const { shortcut } = runWinHelper(record.runtimeDir, { read: record.launcher });
   const args = shortcut.args.match(/"[^"]*"|\S+/g).map((a) => a.replace(/^"|"$/g, ''));
-  return spawn(shortcut.target, [...args, ...extra], { env, stdio: 'ignore' });
+  return capture(spawn(shortcut.target, [...args, ...extra], { env, stdio: ['ignore', 'pipe', 'pipe'] }));
+}
+
+// Keeps what each app printed, shown if the test fails.
+const appOutput = [];
+function capture(child) {
+  const entry = { pid: child.pid, text: '' };
+  appOutput.push(entry);
+  for (const stream of [child.stdout, child.stderr]) stream.on('data', (d) => { entry.text += d; });
+  child.on('exit', (code, signal) => { entry.text += `\n[exited: ${code ?? signal}]`; });
+  return child;
 }
 
 async function targetCount(port) {

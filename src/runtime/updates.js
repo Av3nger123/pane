@@ -101,6 +101,9 @@ function startUpdates({ app, manifest, home, dev }) {
     return { installed: true, pendingRelaunch: true, scheduleCheck() {} };
   }
 
+  if (record.pendingRuntime || record.pendingUpdate) {
+    logUpdate(`${manifest.id}: started on ${RUNTIME_ROOT} with pending work but not handing over (reopened: ${process.argv.includes(REOPENED_FLAG)})`);
+  }
   markRunning(manifest.id, { pid: process.pid, runtimeDir: RUNTIME_ROOT });
   app.on('will-quit', () => clearRunning(manifest.id, process.pid));
   return {
