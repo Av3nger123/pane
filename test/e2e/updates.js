@@ -198,23 +198,43 @@ async function main() {
     assert.ok(record('updater').pendingUpdate, 'the update waits for a restart');
     ok('pane.updates: check finds 0.2.0, download verifies it and fires onReady; nothing changes while it runs');
 
+    const oldPid = app.pid;
     await c.run('pane.updates.restartToUpdate(), true').catch(() => {});
     c.close();
-    await waitFor(async () => {
-      try {
-        const target = await waitForPage(port, (t) => t.url.startsWith('pane-app://'), 'the app window', 5000);
-        const probe = await connect(target.webSocketDebuggerUrl);
-        const version = await probe.run('typeof pane === "object" ? pane.app.version : null');
-        probe.close();
-        return version === '0.2.0';
-      } catch { return false; }
+    // The app quits and Pane reopens it: a new process, on the 0.2.0 files.
+    const marker = path.join(home, 'running', 'updater.json');
+    let reopenedPid = null;
+    await waitFor(() => {
+      if (record('updater').version !== '0.2.0' || !fs.existsSync(marker)) return false;
+      const { pid } = JSON.parse(fs.readFileSync(marker, 'utf8'));
+      if (pid === oldPid) return false;
+      try { process.kill(pid, 0); } catch { return false; }
+      reopenedPid = pid;
+      return true;
     }, 'the app to reopen as 0.2.0', 120000);
-    c = await page();
-    assert.deepEqual(await c.run('pane.call("checkUpdate")'), { available: false, version: '0.2.0', notes: 'New.' });
-    c.close();
     assert.equal(record('updater').pendingUpdate, undefined);
-    ok('restartToUpdate reopened the app as 0.2.0; its backend\'s pane.updates.check() finds nothing newer');
-    await quitByPort(port);
+    if (MAC) {
+      // On Windows the reopened app cannot reuse the old one's debugging
+      // port (Windows still holds it), so the window is checked on macOS.
+      await waitFor(async () => {
+        try {
+          const target = await waitForPage(port, (t) => t.url.startsWith('pane-app://'), 'the app window', 5000);
+          const probe = await connect(target.webSocketDebuggerUrl);
+          const version = await probe.run('typeof pane === "object" ? pane.app.version : null');
+          probe.close();
+          return version === '0.2.0';
+        } catch { return false; }
+      }, 'the reopened window', 60000);
+      c = await page();
+      assert.deepEqual(await c.run('pane.call("checkUpdate")'), { available: false, version: '0.2.0', notes: 'New.' });
+      c.close();
+      ok('restartToUpdate reopened the app as 0.2.0; its backend\'s pane.updates.check() finds nothing newer');
+      await quitByPort(port);
+    } else {
+      ok(`restartToUpdate reopened the app (pid ${reopenedPid}) on its 0.2.0 files`);
+      spawnSync('taskkill', ['/pid', String(reopenedPid), '/t', '/f'], { stdio: 'ignore' }); // this test's own app, by exact pid
+      await sleep(2000);
+    }
 
     const plain = await pane('install', updaterApp('0.1.0', { key: null, id: 'plain' }));
     assert.equal(plain.status, 0, plain.stderr);
