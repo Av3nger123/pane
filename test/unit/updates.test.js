@@ -311,3 +311,37 @@ test('launcher-refresh clears pending moves even when the move fails, and never 
     }
   });
 });
+
+// ---- Removing Panes nobody uses -------------------------------------------
+
+test('cleanupRuntimes removes only Panes nothing uses', () => withEnv({ PANE_HOME: tmp('pane-home-') }, () => {
+  const { cleanupRuntimes } = require('../../src/packaging/runtime');
+  const { markRunning } = require('../../src/core/running');
+  const home = process.env.PANE_HOME;
+  const runtime = (v) => {
+    const dir = path.join(home, 'runtime', v);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'main.js'), '');
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ version: v }));
+    return dir;
+  };
+  const r090 = runtime('0.0.9');
+  const r100 = runtime('0.1.0');
+  const r110 = runtime('0.1.1');
+  const r080 = runtime('0.0.8');
+  fs.writeFileSync(path.join(home, 'runtime', 'current'), `${r110}\n`);
+  const app = (id, rec) => {
+    fs.mkdirSync(path.join(home, 'apps', id), { recursive: true });
+    fs.writeFileSync(path.join(home, 'apps', id, '.pane-install.json'), JSON.stringify({ id, name: id, version: '1.0.0', ...rec }));
+  };
+  app('on-old', { runtimeDir: r100 });
+  app('moving', { runtimeDir: r110, pendingRuntime: r110 });
+  markRunning('still-open', { pid: process.pid, runtimeDir: r080 });
+  const oldPartial = path.join(home, 'runtime', '0.2.0.partial');
+  fs.mkdirSync(oldPartial);
+  fs.utimesSync(oldPartial, new Date(Date.now() - 2 * 3600e3), new Date(Date.now() - 2 * 3600e3));
+
+  assert.deepEqual(cleanupRuntimes().sort(), ['0.0.9', '0.2.0.partial']);
+  assert.ok(!fs.existsSync(r090));
+  for (const kept of [r100, r110, r080]) assert.ok(fs.existsSync(kept), `${path.basename(kept)} is kept`);
+}));

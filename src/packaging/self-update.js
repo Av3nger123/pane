@@ -41,7 +41,7 @@ async function selfUpdate({ force = false, now = Date.now() } = {}) {
     try {
       const version = await latestVersion();
       if (currentVersion && compare(parse(version), parse(currentVersion)) <= 0) {
-        result = { status: 'up-to-date', version: currentVersion };
+        result = { status: 'up-to-date', version: currentVersion, removed: require('./runtime').cleanupRuntimes() };
       } else {
         const dist = distributionUrl();
         if (!dist) throw new Error('This Pane has no distribution address.');

@@ -150,6 +150,15 @@ async function main() {
     ok('when moving a launcher fails, the app still opens on its old Pane and the failure is logged');
     await quitByPort(port);
 
+    // ---- Once nothing uses Pane 0.1.0, it goes ------------------------------
+    assert.equal((await pane('uninstall', pinned, '--purge')).status, 0);
+    installed.splice(installed.indexOf(pinned), 1);
+    const check = await pane('self-update', '--force');
+    assert.equal(check.status, 0, check.stdout + check.stderr);
+    assert.ok(!fs.existsSync(path.join(home, 'runtime', '0.1.0')), 'Pane 0.1.0 was removed');
+    assert.ok(fs.existsSync(path.join(home, 'runtime', '0.1.1', 'main.js')));
+    ok('once no app uses Pane 0.1.0, the next check removes it');
+
     console.log('\nAll update checks passed.');
   } catch (err) {
     console.error('\nUpdate test FAILED:', err.stack || err.message);
