@@ -191,3 +191,67 @@ test('selfUpdate: up to date, newer, offline, garbage, older', { skip: process.p
     server.close();
   }
 });
+
+// ---- Moving apps onto a new Pane ------------------------------------------
+
+test('version specs: "=x.y.z" pins an exact Pane version', () => {
+  const { satisfies, isValidSpec } = require('../../src/core/version');
+  assert.equal(satisfies('0.1.0', '=0.1.0'), true);
+  assert.equal(satisfies('0.1.1', '=0.1.0'), false);
+  assert.equal(isValidSpec('=0.1'), true);
+  assert.equal(satisfies('0.1.1', '0.1.0'), true, 'a bare version still means "at least"');
+});
+
+test('running markers: live processes only', () => withEnv({ PANE_HOME: tmp('pane-home-') }, () => {
+  const { markRunning, clearRunning, runningApps } = require('../../src/core/running');
+  markRunning('a', { pid: process.pid, runtimeDir: '/r/0.1.0' });
+  markRunning('dead', { pid: 999999, runtimeDir: '/r/0.1.0' });
+  assert.deepEqual(runningApps().map((r) => r.id), ['a']);
+  assert.ok(!fs.existsSync(path.join(process.env.PANE_HOME, 'running', 'dead.json')), 'stale markers are removed');
+  clearRunning('a', 12345);
+  assert.equal(runningApps().length, 1, 'another pid does not clear it');
+  clearRunning('a', process.pid);
+  assert.equal(runningApps().length, 0);
+}));
+
+test('moveAppsOnto: moves idle apps, waits for running ones, keeps pinned ones', { skip: process.platform === 'win32' }, async () => {
+  const sandbox = tmp('pane-move-');
+  await withEnv({ PANE_HOME: path.join(sandbox, 'home'), PANE_LAUNCHERS_DIR: path.join(sandbox, 'launchers'), PANE_LAUNCHER_SIGNING: 'adhoc' }, async () => {
+    const { installApp, uninstallApp, moveAppsOnto } = require('../../src/packaging/apps');
+    const { stageRuntime } = require('../../src/packaging/runtime');
+    const { RUNTIME_ROOT } = require('../../src/core/paths');
+    const { markRunning, clearRunning } = require('../../src/core/running');
+    const app = (id, pane) => {
+      const dir = path.join(sandbox, id);
+      fs.mkdirSync(path.join(dir, 'ui'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'pane.json'), JSON.stringify({ id, name: `App ${id}`, pane }));
+      fs.writeFileSync(path.join(dir, 'ui', 'index.html'), '');
+      return dir;
+    };
+    const record = (id) => JSON.parse(fs.readFileSync(path.join(process.env.PANE_HOME, 'apps', id, '.pane-install.json'), 'utf8'));
+    try {
+      installApp(app('a', '>=0.1.0'));
+      installApp(app('b', '=0.1.0'));
+      const next = path.join(process.env.PANE_HOME, 'runtime', '0.1.1');
+      stageRuntime(RUNTIME_ROOT, next, { version: '0.1.1' });
+
+      markRunning('a', { pid: process.pid, runtimeDir: RUNTIME_ROOT });
+      const byId = (list) => Object.fromEntries(list.map((r) => [r.id, r.result]));
+      assert.deepEqual(byId(moveAppsOnto(next)), { a: 'pending', b: 'kept' });
+      assert.equal(record('a').pendingRuntime, next);
+
+      clearRunning('a', process.pid);
+      assert.deepEqual(byId(moveAppsOnto(next)), { a: 'moved', b: 'kept' });
+      assert.equal(record('a').runtimeDir, next);
+      assert.equal(record('a').runtime, '0.1.1');
+      assert.equal(record('a').pendingRuntime, undefined);
+      assert.equal(record('b').runtimeDir, RUNTIME_ROOT);
+      if (process.platform === 'darwin') {
+        const boot = fs.readFileSync(path.join(process.env.PANE_LAUNCHERS_DIR, 'App a.app', 'Contents', 'Resources', 'app', 'boot.js'), 'utf8');
+        assert.ok(boot.includes(next), 'the launcher starts the new Pane');
+      }
+    } finally {
+      for (const id of ['a', 'b']) { try { uninstallApp(id, { purge: true }); } catch { /* not installed */ } }
+    }
+  });
+});

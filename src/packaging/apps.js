@@ -9,6 +9,8 @@ const { loadManifest, ID_RE } = require('../core/manifest');
 const { satisfies } = require('../core/version');
 const { createLauncher, removeLauncher, fileName } = require('./launchers');
 const { verifyApp, AppSignatureError } = require('../core/app-signature');
+const { runningApps } = require('../core/running');
+const { runtimeVersionOf } = require('./runtime');
 const {
   checkPublisher, recordPublisher, forgetPublisher, publisherOf,
 } = require('./publishers');
@@ -140,10 +142,51 @@ function readRecord(dir) {
   try { return JSON.parse(fs.readFileSync(path.join(dir, RECORD), 'utf8')); } catch { return null; }
 }
 
-// Filled in by Phase 5 part 1d.
-function moveAppsOnto() { return []; }
+// Moves an installed app's launcher onto another Pane runtime.
+function refreshLauncher(id, runtimeDir) {
+  if (typeof id !== 'string' || !ID_RE.test(id)) throw new Error(`"${id}" is not an app id.`);
+  const dest = path.join(appsDir(), id);
+  const record = readRecord(dest);
+  if (!record) throw new Error(`No installed app with the id "${id}".`);
+  const version = runtimeVersionOf(runtimeDir);
+  if (!version || !fs.existsSync(path.join(runtimeDir, 'main.js'))) throw new Error(`${runtimeDir} is not a Pane runtime.`);
+  const manifest = loadManifest(dest);
+  if (!satisfies(version, manifest.pane)) throw new Error(`${manifest.name} needs Pane ${manifest.pane}, not ${version}.`);
+  const launcher = createLauncher({ manifest, appDir: dest, runtimeRoot: runtimeDir, home: paneHome(), outDir: launchersDir() });
+  const next = { ...record, runtime: version, runtimeDir, launcher };
+  delete next.pendingRuntime;
+  writeRecord(dest, next);
+  return next;
+}
+
+// After a Pane update: idle apps move now, running ones when they next open,
+// and apps whose pane.json excludes the new version stay where they are.
+function moveAppsOnto(runtimeDir) {
+  const version = runtimeVersionOf(runtimeDir);
+  const running = new Set(runningApps().map((r) => r.id));
+  return listApps().map((record) => {
+    const dest = path.join(appsDir(), record.id);
+    let manifest;
+    try { manifest = loadManifest(dest); } catch { return { id: record.id, result: 'kept' }; }
+    if (record.runtimeDir === runtimeDir || !satisfies(version, manifest.pane)) return { id: record.id, result: 'kept' };
+    if (running.has(record.id)) {
+      writeRecord(dest, { ...record, pendingRuntime: runtimeDir });
+      return { id: record.id, result: 'pending' };
+    }
+    try {
+      refreshLauncher(record.id, runtimeDir);
+      return { id: record.id, result: 'moved' };
+    } catch (err) {
+      return { id: record.id, result: 'kept', error: err.message };
+    }
+  });
+}
+
+function writeRecord(dir, record) {
+  fs.writeFileSync(path.join(dir, RECORD), `${JSON.stringify(record, null, 2)}\n`);
+}
 
 module.exports = {
-  moveAppsOnto,
+  moveAppsOnto, refreshLauncher, readRecord, writeRecord,
   installApp, uninstallApp, listApps, launcherPathFor, SKIP_IN_APP, EXIT_NEEDS_NEWER_PANE,
 };
