@@ -10,7 +10,10 @@ const { unixInstaller } = require('./install-sh');
 
 // "<Name> <version>.dmg" holding "Install <Name>.app": a tiny app whose
 // program is the install script, with the .paneapp in its Resources.
-function buildDmg({ manifest, pkg, pkgName, outDir, opts }) {
+// sign: sign the app and the .dmg with the developer's certificate, then
+// notarize when a notary profile is set (signing/macos.js). Notes go to
+// warnings.
+function buildDmg({ manifest, pkg, pkgName, outDir, opts, sign = false, warnings = [] }) {
   const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'pane-dmg-'));
   try {
     const appName = `Install ${fileName(manifest.name)}`;
@@ -43,9 +46,18 @@ function buildDmg({ manifest, pkg, pkgName, outDir, opts }) {
 ${iconKey}</dict>
 </plist>
 `);
+    const signing = sign ? require('../signing/macos') : null;
+    if (signing) signing.signMac(path.join(stage, `${appName}.app`));
     const dmg = path.join(outDir, `${fileName(manifest.name)} ${manifest.version}.dmg`);
     fs.rmSync(dmg, { force: true });
     execFileSync('hdiutil', ['create', '-volname', fileName(manifest.name), '-srcfolder', stage, '-ov', '-format', 'UDZO', '-fs', 'HFS+', dmg], { stdio: 'pipe' });
+    if (signing) {
+      signing.signMac(dmg);
+      if (!signing.notarize(dmg)) {
+        warnings.push('The .dmg is signed but not notarized, so macOS will still block it. '
+          + 'Set PANE_NOTARY_PROFILE (see "xcrun notarytool store-credentials") and build again.');
+      }
+    }
     return dmg;
   } finally {
     fs.rmSync(stage, { recursive: true, force: true });

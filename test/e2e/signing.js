@@ -96,9 +96,11 @@ async function main() {
 
 function authenticode(file) {
   const script = `$s = Get-AuthenticodeSignature -LiteralPath $env:PANE_FILE; "$($s.Status)|$($s.SignerCertificate.Subject)"`;
-  const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-    env: { ...process.env, PANE_FILE: file }, encoding: 'utf8',
-  }).trim();
+  // Without PSModulePath: one inherited from PowerShell 7 stops Windows
+  // PowerShell from loading the module that has Get-AuthenticodeSignature.
+  const env = { ...process.env, PANE_FILE: file };
+  for (const k of Object.keys(env)) if (k.toLowerCase() === 'psmodulepath') delete env[k];
+  const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { env, encoding: 'utf8' }).trim();
   const [status, subject] = out.split('|');
   return { status, subject };
 }
@@ -143,8 +145,50 @@ async function windows({ work, baseEnv, appDir, manifest, release, p12, password
 
 // ---- macOS -----------------------------------------------------------------
 
-async function mac() {
-  console.log('skip  macOS signing (Task 12)');
+// A temporary keychain holding the test identity. codesign only finds
+// identities in keychains on the user's search list, so it joins the list
+// for the test and the saved list is put back afterwards.
+function tempKeychain(work, p12, password, cleanups) {
+  const keychain = path.join(work, 'pane-test.keychain-db');
+  const pw = crypto.randomBytes(12).toString('hex');
+  const security = (...args) => execFileSync('security', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const saved = security('list-keychains', '-d', 'user').split('\n').map((l) => l.trim().replace(/^"|"$/g, '')).filter(Boolean);
+  security('create-keychain', '-p', pw, keychain);
+  cleanups.push(() => security('delete-keychain', keychain));
+  security('unlock-keychain', '-p', pw, keychain);
+  security('set-keychain-settings', keychain);
+  security('import', p12, '-k', keychain, '-P', password, '-T', '/usr/bin/codesign');
+  security('set-key-partition-list', '-S', 'apple-tool:,apple:', '-s', '-k', pw, keychain);
+  security('list-keychains', '-d', 'user', '-s', keychain, ...saved);
+  cleanups.push(() => security('list-keychains', '-d', 'user', '-s', ...saved));
+  const identity = /\b([0-9A-F]{40})\b "Pane Test"/.exec(security('find-identity', '-p', 'codesigning', keychain))[1];
+  return { keychain, identity };
+}
+
+async function mac({ work, baseEnv, appDir, release, p12, password, cleanups }) {
+  const { keychain, identity } = tempKeychain(work, p12, password, cleanups);
+  const env = {
+    ...baseEnv, PANE_DIST_URL: 'https://downloads.example.com/pane',
+    PANE_SIGN_IDENTITY: identity, PANE_SIGN_KEYCHAIN: keychain, PANE_SIGN_TIMESTAMP: 'none',
+  };
+  delete env.PANE_NOTARY_PROFILE;
+  const built = spawnSync(process.execPath, [CLI, 'build', appDir, '--sign'], { env, encoding: 'utf8' });
+  const out = `${built.stdout}${built.stderr}`;
+  assert.equal(built.status, 0, out);
+  assert.match(out, /not notarized/, out); // warnings go to stderr
+  const dmg = path.join(release, fs.readdirSync(release).find((f) => f.endsWith('.dmg')));
+  execFileSync('codesign', ['--verify', '--strict', dmg], { stdio: 'pipe' });
+  const mnt = path.join(work, 'mnt');
+  fs.mkdirSync(mnt);
+  execFileSync('hdiutil', ['attach', dmg, '-nobrowse', '-readonly', '-mountpoint', mnt], { stdio: 'pipe' });
+  cleanups.push(() => spawnSync('hdiutil', ['detach', mnt, '-force'], { stdio: 'ignore' }));
+  const app = path.join(mnt, 'Install Field Notes.app');
+  execFileSync('codesign', ['--verify', '--strict', '--deep', app], { stdio: 'pipe' });
+  const details = spawnSync('codesign', ['-dvv', app], { encoding: 'utf8' }).stderr;
+  assert.match(details, /Authority=Pane Test/, details);
+  assert.match(details, /flags=0x10000\(runtime\)/, details);
+  ok('pane build --sign signed "Install Field Notes.app" (hardened runtime) and the .dmg');
+  ok('without PANE_NOTARY_PROFILE it warns that the .dmg is not notarized');
 }
 
 main();

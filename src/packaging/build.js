@@ -89,7 +89,7 @@ async function buildInstaller(appDir, { out, key, sign = false } = {}) {
     const installers = [];
 
     // macOS: a disk image with an "Install <App>" app (needs hdiutil).
-    if (process.platform === 'darwin') installers.push(buildDmg({ manifest, pkg, pkgName, outDir, opts }));
+    if (process.platform === 'darwin') installers.push(buildDmg({ manifest, pkg, pkgName, outDir, opts, sign, warnings }));
     else warnings.push('No macOS installer (.dmg): build on a Mac to make one.');
 
     // Windows: PaneSetup.exe with the app attached (from any OS, once the
