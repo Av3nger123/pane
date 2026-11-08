@@ -13,19 +13,31 @@
 
 const path = require('path');
 const { appsDir } = require('../../core/paths');
-const { alive, takeLock, logUpdate: log } = require('../../core/update-state');
+const { alive, takeLock, takeHandover, logUpdate: log } = require('../../core/update-state');
+const { runningApps } = require('../../core/running');
 const { refreshLauncher, readRecord, writeRecord, openInstalledApp } = require('../../packaging/apps');
 const { cleanupRuntimes } = require('../../packaging/runtime');
 const { UsageError } = require('../util');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function launcherRefresh(id, flags, extra = []) {
+async function launcherRefresh(id, flags, extra = [], { waitMs = 30000 } = {}) {
   if (!id) throw new UsageError('pane launcher-refresh <app-id> [--open] [--after <pid>]');
   const after = Number(flags.after);
-  for (let waited = 0; after && alive(after) && waited < 30000; waited += 200) await sleep(200);
+  for (let waited = 0; after && alive(after) && waited < waitMs; waited += 200) await sleep(200);
+  // The app's own arguments (a link or file) come in a file, never on a
+  // command line (cmd.exe would read quotes and % signs in them).
+  const args = [...takeHandover(id), ...extra];
 
-  log(`${id}: launcher-refresh started${after && alive(after) ? ` (app ${after} still running after 30 s)` : ''}`);
+  // Never under a running app: it may have refused to quit (unsaved work).
+  // Everything stays pending for its next start.
+  const stillRunning = (after && alive(after)) || runningApps().some((r) => r.id === id);
+  if (stillRunning) {
+    log(`${id}: still running, so nothing was changed; it updates when it next starts`);
+    return 0;
+  }
+
+  log(`${id}: launcher-refresh started`);
   const release = takeLock(`app-${id}`);
   if (!release) { // another refresh of this app is running and will reopen it
     log(`${id}: another refresh is running; this one does nothing`);
@@ -65,7 +77,7 @@ async function launcherRefresh(id, flags, extra = []) {
   }
   if (flags.open) {
     try {
-      openInstalledApp(readRecord(appHome), extra);
+      openInstalledApp(readRecord(appHome), args);
       log(`${id}: reopened`);
     } catch (err) {
       log(`${id}: could not reopen: ${err.message}`);

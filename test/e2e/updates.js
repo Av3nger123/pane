@@ -3,7 +3,8 @@
 //   1. a computer has Pane 0.1.0 and two installed apps (one pinned to =0.1.0)
 //   2. a newer Pane (0.1.1) is announced; an app opens and quietly installs it
 //   3. the running app keeps working; its launcher moves when it next opens
-//   4. the pinned app stays on 0.1.0; a failed move still opens the app
+//   4. the pinned app stays on 0.1.0; a failed move still opens the app;
+//      the previous Pane stays installed
 //   5. a signed app updates itself through pane.updates (check, download,
 //      restart into the new version); an unsigned app cannot
 // Run: npm run test:updates   (macOS or Windows)
@@ -158,9 +159,9 @@ async function main() {
     installed.splice(installed.indexOf(pinned), 1);
     const check = await pane('self-update', '--force');
     assert.equal(check.status, 0, check.stdout + check.stderr);
-    assert.ok(!fs.existsSync(path.join(home, 'runtime', '0.1.0')), 'Pane 0.1.0 was removed');
+    assert.ok(fs.existsSync(path.join(home, 'runtime', '0.1.0', 'main.js')), 'Pane 0.1.0 stays as the previous Pane');
     assert.ok(fs.existsSync(path.join(home, 'runtime', '0.1.1', 'main.js')));
-    ok('once no app uses Pane 0.1.0, the next check removes it');
+    ok('once no app uses Pane 0.1.0, it stays only as the previous Pane (for going back by hand)');
 
     // ---- An app updates itself through pane.updates --------------------------
     const { generateAppKey, signApp } = require('../../src/core/app-signature');
@@ -303,7 +304,9 @@ function launch(record, port, env) {
   const { runWinHelper } = require('../../src/packaging/launchers');
   const { shortcut } = runWinHelper(record.runtimeDir, { read: record.launcher });
   const args = shortcut.args.match(/"[^"]*"|\S+/g).map((a) => a.replace(/^"|"$/g, ''));
-  return capture(spawn(shortcut.target, [...args, ...extra], { env, stdio: ['ignore', 'pipe', 'pipe'] }));
+  // Start it the way the shortcut does, in the shortcut's working folder
+  // (the app's own folder), so updates must cope with that folder in use.
+  return capture(spawn(shortcut.target, [...args, ...extra], { env, cwd: shortcut.cwd || undefined, stdio: ['ignore', 'pipe', 'pipe'] }));
 }
 
 // Keeps what each app printed, shown if the test fails.

@@ -14,11 +14,15 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { RUNTIME_ROOT, appsDir, samePath } = require('../core/paths');
-const { updateDue, logUpdate, REOPENED_FLAG } = require('../core/update-state');
+const {
+  updateDue, logUpdate, lockHolder, recordHandover, recentHandover, REOPENED_FLAG,
+} = require('../core/update-state');
 const { markRunning, clearRunning } = require('../core/running');
 const { cmdArgs } = require('../core/run');
 
 const CHECK_DELAY_MS = 10000;
+// A move or update holds the app's lock for seconds; an older lock is a crash.
+const LOCK_WAIT_MS = 5 * 60 * 1000;
 
 function readRecord(id) {
   try { return JSON.parse(fs.readFileSync(path.join(appsDir(), id, '.pane-install.json'), 'utf8')); } catch { return null; }
@@ -27,7 +31,9 @@ function readRecord(id) {
 function spawnPane(home, args, opts) {
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE; // the pane script sets its own
-  const all = { env, windowsHide: true, ...opts };
+  // Run from PANE_HOME, never from the app's folder (a Windows shortcut
+  // starts the app there): Windows cannot replace a folder in use.
+  const all = { env, cwd: home, windowsHide: true, ...opts };
   return process.platform === 'win32'
     ? spawn(process.env.ComSpec || 'cmd.exe', cmdArgs(path.join(home, 'bin', 'pane.cmd'), args), { ...all, windowsVerbatimArguments: true })
     : spawn(path.join(home, 'bin', 'pane'), args, all);
@@ -73,7 +79,8 @@ function runAppUpdate(home, args, onProgress = () => {}) {
 // Quits the app; `pane app-update apply` installs the waiting update and
 // reopens it (once, see launcher-refresh).
 function restartToUpdate({ app, manifest, home }) {
-  runPane(home, ['app-update', 'apply', manifest.id, '--open', '--after', String(process.pid), '--', ...openArgs()]);
+  recordHandover(manifest.id, readRecord(manifest.id) || {}, openArgs());
+  runPane(home, ['app-update', 'apply', manifest.id, '--open', '--after', String(process.pid)]);
   app.quit();
 }
 
@@ -93,16 +100,27 @@ function shouldHandOver(record, { argv = process.argv, runtimeRoot = RUNTIME_ROO
 
 // { pendingRelaunch, scheduleCheck() }
 function startUpdates({ app, manifest, home, dev }) {
-  const record = !dev && home && path.resolve(manifest.dir) === path.join(appsDir(), manifest.id) ? readRecord(manifest.id) : null;
+  const record = !dev && home && samePath(manifest.dir, path.join(appsDir(), manifest.id)) ? readRecord(manifest.id) : null;
   if (!record) return { installed: false, pendingRelaunch: false, scheduleCheck() {} };
+  const handOver = { installed: true, pendingRelaunch: true, scheduleCheck() {} };
 
-  if (shouldHandOver(record)) {
-    logUpdate(`${manifest.id}: handing over to pane launcher-refresh (${record.pendingUpdate ? 'update waiting' : `moving onto ${record.pendingRuntime}`})`);
-    runPane(home, ['launcher-refresh', manifest.id, '--open', '--after', String(process.pid), '--', ...openArgs()]);
-    return { installed: true, pendingRelaunch: true, scheduleCheck() {} };
+  // Pane is moving or updating this app right now: its files may be half
+  // replaced, and the pane command reopens it when done.
+  if (lockHolder(`app-${manifest.id}`, { maxAge: LOCK_WAIT_MS })) {
+    logUpdate(`${manifest.id}: opened while Pane is moving it; it reopens when that is done`);
+    return handOver;
   }
 
-  if (record.pendingRuntime || record.pendingUpdate) {
+  if (shouldHandOver(record)) {
+    if (recentHandover(manifest.id, record)) {
+      logUpdate(`${manifest.id}: the last hand-over did not finish; starting on ${RUNTIME_ROOT} instead`);
+    } else {
+      logUpdate(`${manifest.id}: handing over to pane launcher-refresh (${record.pendingUpdate ? 'update waiting' : `moving onto ${record.pendingRuntime}`})`);
+      recordHandover(manifest.id, record, openArgs());
+      runPane(home, ['launcher-refresh', manifest.id, '--open', '--after', String(process.pid)]);
+      return handOver;
+    }
+  } else if (record.pendingRuntime || record.pendingUpdate) {
     logUpdate(`${manifest.id}: started on ${RUNTIME_ROOT} with pending work but not handing over (reopened: ${process.argv.includes(REOPENED_FLAG)})`);
   }
   markRunning(manifest.id, { pid: process.pid, runtimeDir: RUNTIME_ROOT });

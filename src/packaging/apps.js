@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { tarBinary } = require('../core/run');
 const { loadManifest, ID_RE } = require('../core/manifest');
 const { satisfies } = require('../core/version');
 const { createLauncher, removeLauncher, fileName } = require('./launchers');
@@ -41,7 +42,7 @@ function installApp(source, { requireSigner = false, expectId } = {}) {
   let appSource = src;
   if (/\.paneapp$/i.test(src)) {
     unpacked = fs.mkdtempSync(path.join(os.tmpdir(), 'pane-install-'));
-    execFileSync('tar', ['-xzf', src, '-C', unpacked], { stdio: 'pipe' });
+    execFileSync(tarBinary(), ['-xzf', src, '-C', unpacked], { stdio: 'pipe' });
     appSource = unpacked;
   }
   try {
@@ -80,20 +81,41 @@ function installApp(source, { requireSigner = false, expectId } = {}) {
       filter: (p) => !SKIP_IN_APP.has(path.basename(p)),
     });
     const previous = readRecord(dest);
-    fs.rmSync(dest, { recursive: true, force: true });
-    fs.renameSync(tmp, dest);
+    // Swap folders by renaming, never by deleting first: on Windows a folder
+    // in use cannot be renamed, so the install fails cleanly instead of
+    // leaving a half-deleted app.
+    const old = `${dest}.old`;
+    fs.rmSync(old, { recursive: true, force: true });
+    if (fs.existsSync(dest)) {
+      try {
+        fs.renameSync(dest, old);
+      } catch (err) {
+        fs.rmSync(tmp, { recursive: true, force: true });
+        throw new Error(`${incoming.name} is in use (${err.code || err.message}). Close it and try again. Nothing was installed.`);
+      }
+    }
+    const restore = () => {
+      fs.rmSync(dest, { recursive: true, force: true });
+      if (fs.existsSync(old)) fs.renameSync(old, dest);
+    };
+    try {
+      fs.renameSync(tmp, dest);
+    } catch (err) {
+      restore();
+      throw err;
+    }
 
     const manifest = loadManifest(dest);
-    if (previous && previous.launcher && previous.launcher !== launcherPathFor(manifest)) removeLauncher(previous.launcher);
     let launcher;
     try {
       launcher = createLauncher({
         manifest, appDir: dest, runtimeRoot: RUNTIME_ROOT, home: paneHome(), outDir: launchersDir(),
       });
     } catch (err) {
-      fs.rmSync(dest, { recursive: true, force: true }); // no half-installed apps
+      restore(); // no half-installed apps
       throw new Error(`Could not create the launcher for ${manifest.name}: ${err.message}`);
     }
+    if (previous && previous.launcher && previous.launcher !== launcher) removeLauncher(previous.launcher);
     recordPublisher(manifest.id, signer);
     const record = {
       id: manifest.id, name: manifest.name, version: manifest.version,
@@ -102,7 +124,8 @@ function installApp(source, { requireSigner = false, expectId } = {}) {
       runtime: RUNTIME_VERSION, runtimeDir: RUNTIME_ROOT, launcher,
       installedAt: new Date().toISOString(),
     };
-    fs.writeFileSync(path.join(dest, RECORD), `${JSON.stringify(record, null, 2)}\n`);
+    writeRecord(dest, record);
+    try { fs.rmSync(old, { recursive: true, force: true }); } catch { /* removed next install */ }
     return record;
   } finally {
     if (unpacked) fs.rmSync(unpacked, { recursive: true, force: true });
@@ -219,15 +242,20 @@ function openInstalledApp(record, extra = []) {
       out = fs.openSync(path.join(paneHome(), 'logs', `${record.id}-reopen.log`), 'w');
     } catch { /* no log */ }
     child = spawn(electronBinary(record.runtimeDir), [path.join(record.runtimeDir, 'main.js'), `--app=${path.join(appsDir(), record.id)}`, ...args],
-      { env, detached: true, stdio: ['ignore', out, out], windowsHide: false });
+      { env, cwd: path.join(appsDir(), record.id), detached: true, stdio: ['ignore', out, out], windowsHide: false });
     if (typeof out === 'number') fs.closeSync(out);
   }
   child.on('error', () => {});
   child.unref();
 }
 
+// Written to a temporary file, then renamed: a crash never leaves a record
+// that cannot be read.
 function writeRecord(dir, record) {
-  fs.writeFileSync(path.join(dir, RECORD), `${JSON.stringify(record, null, 2)}\n`);
+  const file = path.join(dir, RECORD);
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, `${JSON.stringify(record, null, 2)}\n`);
+  fs.renameSync(tmp, file);
 }
 
 module.exports = {

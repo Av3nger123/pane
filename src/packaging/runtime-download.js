@@ -12,6 +12,7 @@ const { execFileSync } = require('child_process');
 const { verifyRelease, checkReleaseKeys } = require('../core/release-signature');
 const { RUNTIME_ROOT, paneHome, runtimesDir, electronBinary } = require('../core/paths');
 const { runtimeArchiveName } = require('./runtime');
+const { tarBinary } = require('../core/run');
 
 class RuntimeDownloadError extends Error {}
 
@@ -65,8 +66,7 @@ async function downloadRuntime({ version, dist, keys, onProgress }) {
 
     const unpacked = path.join(work, 'runtime');
     fs.mkdirSync(unpacked);
-    const tar = process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
-    execFileSync(tar, ['-xzf', archive, '-C', unpacked], { stdio: 'pipe' });
+    execFileSync(tarBinary(), ['-xzf', archive, '-C', unpacked], { stdio: 'pipe' });
 
     const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
     try {

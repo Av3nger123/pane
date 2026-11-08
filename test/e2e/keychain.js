@@ -1,8 +1,9 @@
 'use strict';
 // Launcher signing on macOS, end to end:
 //   1. Pane makes a signing identity of this computer's own, in a keychain of
-//      its own, and adds that keychain to the user's search list without
-//      dropping any entry
+//      its own; that keychain is on the user's search list only while
+//      codesign runs, the user's list comes back exactly, and a locked Pane
+//      keychain never causes a prompt
 //   2. a launcher signed with it keeps reading its pane.secrets after it is
 //      rebuilt onto another Pane (as a Pane update does), with no password
 //      prompt; an ad hoc signed launcher (the control) does not
@@ -14,7 +15,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn, execFileSync } = require('child_process');
+const { spawn, spawnSync, execFileSync } = require('child_process');
 const { RUNTIME_ROOT } = require('../../src/core/paths');
 const { waitForPage, connect, waitFor, randomPort, sleep } = require('./lib/cdp');
 
@@ -43,7 +44,7 @@ async function main() {
   process.env.PANE_LAUNCHERS_DIR = path.join(work, 'launchers');
   delete process.env.PANE_LAUNCHER_SIGNING;
   delete process.env.ELECTRON_RUN_AS_NODE;
-  const { ensureLocalIdentity } = require('../../src/packaging/signing/local-identity');
+  const { ensureLocalIdentity, withLocalIdentity } = require('../../src/packaging/signing/local-identity');
   let keychain = null;
   const installed = [];
   try {
@@ -56,27 +57,39 @@ async function main() {
     assert.match(security('find-identity', '-p', 'codesigning', keychain), new RegExp(`${first.identity} "Pane Local Signing`));
     ok('a signing identity is made in a keychain of Pane\'s own');
 
-    const list = searchList().map(realpath);
-    assert.ok(list.includes(realpath(keychain)), 'Pane\'s keychain is on the search list');
-    for (const entry of savedList) assert.ok(list.includes(realpath(entry)), `the search list still has ${entry}`);
+    const sameList = () => assert.deepEqual(searchList().map(realpath), savedList.map(realpath), 'the search list is exactly the user\'s');
+    sameList();
     assert.equal(security('default-keychain', '-d', 'user').trim().replace(/^"|"$/g, ''), savedDefault);
-    ok('the search list keeps every entry, and the default keychain is unchanged');
+    ok('making it leaves the search list and the default keychain exactly as they were');
 
     const second = ensureLocalIdentity();
     assert.deepEqual(second, first);
-    assert.equal(searchList().filter((e) => realpath(e) === realpath(keychain)).length, 1);
-    ok('a second call reuses the same identity and lists the keychain once');
+    ok('a second call reuses the same identity');
 
     assert.equal(ensureLocalIdentity({ env: { PANE_LAUNCHER_SIGNING: 'adhoc' } }), null);
+    assert.equal(withLocalIdentity((local) => local, { env: { PANE_LAUNCHER_SIGNING: 'adhoc' } }), null);
     ok('PANE_LAUNCHER_SIGNING=adhoc turns it off');
 
     // A signed binary carries the certificate, and the requirement names it.
     const bin = path.join(work, 'true');
     fs.copyFileSync('/usr/bin/true', bin);
-    execFileSync('codesign', ['--force', '--sign', first.identity, '--keychain', keychain, '--identifier', 'dev.pane.test', bin], { stdio: 'pipe' });
+    withLocalIdentity((local) => {
+      assert.ok(searchList().map(realpath).includes(realpath(local.keychain)), 'on the list while signing');
+      execFileSync('codesign', ['--force', '--sign', local.identity, '--keychain', local.keychain, '--identifier', 'dev.pane.test', bin], { stdio: 'pipe' });
+    });
+    sameList();
     const requirement = execFileSync('codesign', ['-d', '-r-', bin], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     assert.match(requirement, /identifier "dev\.pane\.test" and certificate leaf = H"[0-9a-f]{40}"/);
-    ok('codesign signs with it, and the requirement pins the certificate');
+    ok('codesign signs with it, the requirement pins the certificate, and the list comes back exactly');
+
+    // After a restart Pane's keychain is locked. A search for something that
+    // is in no keychain must answer at once, never wait on an unlock prompt.
+    security('lock-keychain', keychain);
+    const started = Date.now();
+    const miss = spawnSync('security', ['find-generic-password', '-s', `pane-missing-${process.pid}`], { timeout: 15000, stdio: 'ignore' });
+    assert.notEqual(miss.signal, 'SIGTERM', 'the lookup hung (an unlock prompt)');
+    assert.equal(miss.status, 44, 'not found');
+    ok(`a locked Pane keychain asks nothing: a missing item is reported in ${Date.now() - started} ms`);
 
     // ---- Part 2: secrets survive a launcher rebuild ------------------------
     // Electron keeps the key behind pane.secrets in the default keychain: a

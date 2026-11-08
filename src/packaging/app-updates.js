@@ -14,6 +14,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { tarBinary } = require('../core/run');
 const { loadManifest, ID_RE } = require('../core/manifest');
 const { parseUpdateFile } = require('../core/app-update');
 const { verifyApp, fingerprint } = require('../core/app-signature');
@@ -108,7 +109,7 @@ async function stageAppUpdate(id, file) {
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'pane-update-'));
   try {
     try {
-      execFileSync('tar', ['-xzf', path.resolve(file), '-C', work], { stdio: 'pipe' });
+      execFileSync(tarBinary(), ['-xzf', path.resolve(file), '-C', work], { stdio: 'pipe' });
     } catch {
       throw new AppUpdateError(`${manifest.name}'s update could not be unpacked. It is not a .paneapp file.`);
     }

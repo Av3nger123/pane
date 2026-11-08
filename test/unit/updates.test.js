@@ -348,6 +348,10 @@ test('cleanupRuntimes removes only Panes nothing uses', () => withEnv({ PANE_HOM
   fs.utimesSync(oldDownload, new Date(Date.now() - 2 * 3600e3), new Date(Date.now() - 2 * 3600e3));
 
   assert.deepEqual(cleanupRuntimes().sort(), ['0.0.9', '0.2.0.partial']);
+  // Nothing uses 0.1.0 now, but it is the Pane before the current one: kept.
+  fs.rmSync(path.join(home, 'apps', 'on-old'), { recursive: true });
+  assert.deepEqual(cleanupRuntimes(), []);
+  assert.ok(fs.existsSync(r100), 'the previous Pane stays');
   assert.ok(!fs.existsSync(oldDownload), 'a download left behind is removed');
   assert.ok(fs.existsSync(newDownload), 'a download in progress is kept');
   assert.ok(!fs.existsSync(r090));
@@ -486,4 +490,53 @@ test('cmd.exe lines for .cmd files survive /s and spaces', () => {
   const { cmdArgs } = require('../../src/core/run');
   assert.deepEqual(cmdArgs('C:\\Users\\A B\\Pane\\bin\\pane.cmd', ['launcher-refresh', 'notes', '--', 'C:\\My Notes\\a.md']),
     ['/d', '/s', '/c', '""C:\\Users\\A B\\Pane\\bin\\pane.cmd" "launcher-refresh" "notes" "--" "C:\\My Notes\\a.md""']);
+});
+
+test('hand-over: a failed attempt is not repeated, and an app being moved does not start', () => withEnv({ PANE_HOME: tmp('pane-handover-') }, () => {
+  const { recordHandover, recentHandover, takeHandover, takeLock } = require('../../src/core/update-state');
+  const { startUpdates } = require('../../src/runtime/updates');
+  const { appsDir } = require('../../src/core/paths');
+  const record = { id: 'h', pendingRuntime: '/x/runtime/0.1.1' };
+  const now = Date.now();
+  recordHandover('h', record, ['notes://a b', '100%"&calc'], { now });
+  assert.equal(recentHandover('h', record, { now: now + 1000 }), true, 'same pending work: do not hand over again');
+  assert.equal(recentHandover('h', { ...record, pendingRuntime: '/x/runtime/0.1.2' }, { now }), false, 'new pending work: try again');
+  assert.equal(recentHandover('h', record, { now: now + 2 * 3600e3 }), false, 'an hour later: try again');
+  assert.deepEqual(takeHandover('h'), ['notes://a b', '100%"&calc'], 'arguments come back exactly, through a file');
+  assert.equal(recentHandover('h', record, { now }), false, 'taken: gone');
+
+  // While Pane holds the app's lock (moving it), opening it exits quietly.
+  const dir = path.join(appsDir(), 'h');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, '.pane-install.json'), JSON.stringify({ id: 'h' }));
+  const release = takeLock('app-h');
+  try {
+    const result = startUpdates({ app: { on() {} }, manifest: { id: 'h', dir }, home: process.env.PANE_HOME, dev: false });
+    assert.equal(result.pendingRelaunch, true);
+  } finally {
+    release();
+  }
+}));
+
+test('launcher-refresh changes nothing while the app is still running', { skip: process.platform === 'win32' }, async () => {
+  const sandbox = tmp('pane-busy-');
+  await withEnv({ PANE_HOME: path.join(sandbox, 'home'), PANE_LAUNCHERS_DIR: path.join(sandbox, 'launchers'), PANE_LAUNCHER_SIGNING: 'adhoc' }, async () => {
+    const { installApp, uninstallApp } = require('../../src/packaging/apps');
+    const { launcherRefresh } = require('../../src/cli/commands/launcher-refresh');
+    const dir = path.join(sandbox, 'app');
+    fs.mkdirSync(path.join(dir, 'ui'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'pane.json'), JSON.stringify({ id: 'busy', name: 'Busy' }));
+    fs.writeFileSync(path.join(dir, 'ui', 'index.html'), '');
+    try {
+      installApp(dir);
+      const file = path.join(process.env.PANE_HOME, 'apps', 'busy', '.pane-install.json');
+      fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, 'utf8')), pendingUpdate: '/nowhere.paneapp' }));
+      // The "app" is this test process: alive, so it refused to quit.
+      assert.equal(await launcherRefresh('busy', { after: String(process.pid), open: true }, [], { waitMs: 300 }), 0);
+      assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).pendingUpdate, '/nowhere.paneapp', 'still pending for its next start');
+      assert.match(fs.readFileSync(path.join(process.env.PANE_HOME, 'logs', 'update.log'), 'utf8'), /still running, so nothing was changed/);
+    } finally {
+      try { uninstallApp('busy', { purge: true }); } catch { /* not installed */ }
+    }
+  });
 });

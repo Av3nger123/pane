@@ -282,7 +282,7 @@ Installed Notes 1.2.0
 When an installed app opens, Pane checks for a newer version of itself, at most once a day per computer and never under `pane dev`. If there is one, Pane downloads it in the background, checks its signature, and installs it next to the old one. Users see nothing: no dialog, no banner, no restart.
 - A running app is never closed or reloaded. It moves onto the new Pane the next time it opens.
 - Apps that aren't running move straight away.
-- An old Pane is removed once no installed or running app uses it.
+- The previous Pane stays installed, so going back by hand stays possible. Older ones are removed once no installed or running app uses them.
 - Every outcome goes to `.../Pane/logs/update.log`, and nowhere else.
 
 **Pane's promise:** a new Pane keeps running apps built for an older one. Every app moves to the newest Pane its `"pane"` range allows. To stay on one Pane, name it exactly: `"pane": "=0.1.0"`.
@@ -387,7 +387,8 @@ CI (`.github/workflows/ci.yml`) runs the unit and smoke tests on macOS, Windows 
 - **Real certificates are untested.** `pane build --sign` is tested in CI with throwaway certificates. Nobody has yet notarized with Apple or built SmartScreen reputation. "Install <App>" runs a shell script as its program, and Apple's notary service may reject that.
 - **Release key.** Pane's own release key isn't created yet, so installers built today refuse to download Pane (`pane build` warns about this), and installed Panes cannot update themselves.
 - **Updates have no rollback.** A bad Pane or app version is fixed by shipping a newer one. App updates don't check Apple or Microsoft certificates, only the app's own key.
-- **Pinned apps** (`"pane": "=x.y.z"` on an older Pane) can't install their own updates yet.
+- **Pinned apps** (`"pane": "=x.y.z"` on an older Pane) can't install their own updates yet, and can't be newly installed on a computer whose Pane is already newer.
+- **Windows taskbar pins** point at a specific Pane version. After Pane updates, a pinned icon keeps opening the app on the old Pane, and stops working once that Pane is removed. The Start menu entry always works.
 - **Fuses** are turned off only in macOS launchers. Windows and Linux apps run the shared `electron.exe`, which the `pane` command needs as Node.
 - **Intel Macs and Linux on ARM** have no release build yet. The release workflow builds macOS arm64, Windows x64 and Linux x64.
 

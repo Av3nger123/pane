@@ -3,6 +3,8 @@
 //   update-check.json   when Pane last looked for a newer version
 //   locks/<name>.lock   one updater at a time (holds the pid)
 //   logs/update.log     what updates did (the only place they report to)
+//   handover/<id>.json  an app's last hand-over to the pane command: what was
+//                       pending, when, and the arguments to reopen it with
 
 const fs = require('fs');
 const path = require('path');
@@ -63,6 +65,51 @@ function takeLock(name) {
   return null;
 }
 
+// The live pid holding a lock taken less than maxAge ago, or null.
+function lockHolder(name, { maxAge = STALE_LOCK } = {}) {
+  const file = path.join(paneHome(), 'locks', `${name}.lock`);
+  try {
+    const pid = Number(fs.readFileSync(file, 'utf8'));
+    return alive(pid) && Date.now() - fs.statSync(file).mtimeMs < maxAge ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+// Hand-over attempts. The app records one before it exits; the pane command
+// takes it (with the arguments) when it runs. A record still there for the
+// same pending work means the pane command never ran: the app then starts
+// normally instead of handing over again, so a failure never repeats.
+const HANDOVER_RETRY = 3600 * 1000;
+const handoverFile = (id) => path.join(paneHome(), 'handover', `${id}.json`);
+const pendingOf = (record) => ({ runtime: record.pendingRuntime || null, update: record.pendingUpdate || null });
+
+function recordHandover(id, record, args, { now = Date.now() } = {}) {
+  fs.mkdirSync(path.dirname(handoverFile(id)), { recursive: true });
+  fs.writeFileSync(handoverFile(id), JSON.stringify({ ...pendingOf(record), at: now, args }));
+}
+
+function recentHandover(id, record, { now = Date.now() } = {}) {
+  try {
+    const last = JSON.parse(fs.readFileSync(handoverFile(id), 'utf8'));
+    const pending = pendingOf(record);
+    return last.runtime === pending.runtime && last.update === pending.update && now - last.at < HANDOVER_RETRY;
+  } catch {
+    return false;
+  }
+}
+
+// The arguments the app asked to be reopened with ([] if none); the record is removed.
+function takeHandover(id) {
+  let args = [];
+  try {
+    const last = JSON.parse(fs.readFileSync(handoverFile(id), 'utf8'));
+    if (Array.isArray(last.args) && last.args.every((a) => typeof a === 'string')) args = last.args;
+  } catch { /* none */ }
+  fs.rmSync(handoverFile(id), { force: true });
+  return args;
+}
+
 function logUpdate(line) {
   try {
     const dir = path.join(paneHome(), 'logs');
@@ -71,4 +118,6 @@ function logUpdate(line) {
   } catch { /* logging must never break an app or an update */ }
 }
 
-module.exports = { updateDue, markChecked, takeLock, alive, logUpdate, REOPENED_FLAG };
+module.exports = {
+  updateDue, markChecked, takeLock, lockHolder, alive, logUpdate, recordHandover, recentHandover, takeHandover, REOPENED_FLAG,
+};

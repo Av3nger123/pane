@@ -147,12 +147,21 @@ const runtimeArchiveName = (version, platform = process.platform, arch = process
 // <out>/pane-latest.json.
 function packRuntime({ out, signingKey = process.env.PANE_RELEASE_SIGNING_KEY, version = RUNTIME_VERSION }) {
   if (!signingKey) throw new Error("Pane's release signing key is missing. Set PANE_RELEASE_SIGNING_KEY or pass --key <file>.");
+  // Installed Panes trust only the keys baked in here, forever: a release
+  // whose keys do not include its own signing key could never update.
+  const keys = releaseKeys();
+  const own = crypto.createPublicKey(signingKey).export({ type: 'spki', format: 'der' });
+  if (!keys.some((pem) => crypto.createPublicKey(pem).export({ type: 'spki', format: 'der' }).equals(own))) {
+    throw new Error(keys.length
+      ? "The release keys (PANE_RELEASE_KEYS or package.json pane.releaseKeys) do not include this signing key's public key. Installed copies could never update. Nothing was packed."
+      : 'There are no release keys (PANE_RELEASE_KEYS or package.json pane.releaseKeys). Installed copies could never update. Nothing was packed.');
+  }
   const dir = path.join(path.resolve(out), `v${version}`);
   fs.mkdirSync(dir, { recursive: true });
   const archive = path.join(dir, runtimeArchiveName(version));
   const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'pane-runtime-'));
   try {
-    stageRuntime(RUNTIME_ROOT, path.join(stage, 'runtime'), { version, releaseKeys: releaseKeys() });
+    stageRuntime(RUNTIME_ROOT, path.join(stage, 'runtime'), { version, releaseKeys: keys });
     execFileSync('tar', ['-czf', archive, '-C', path.join(stage, 'runtime'), '.'], { stdio: 'pipe' });
   } finally {
     fs.rmSync(stage, { recursive: true, force: true });
@@ -187,6 +196,15 @@ function cleanupRuntimes() {
   const keep = new Set([same(RUNTIME_ROOT)]);
   const current = installedRuntime();
   if (current) keep.add(same(current));
+  // The previous Pane stays too, so going back by hand stays possible if a
+  // new Pane turns out bad.
+  const currentVersion = current ? parse(runtimeVersionOf(current) || '') : null;
+  if (currentVersion) {
+    const older = names.map((name) => ({ dir: path.join(root, name), v: parse(name) }))
+      .filter((r) => r.v && compare(r.v, currentVersion) < 0 && fs.existsSync(path.join(r.dir, 'main.js')))
+      .sort((a, b) => compare(b.v, a.v));
+    if (older.length) keep.add(same(older[0].dir));
+  }
   const { appsDir } = require('../core/paths');
   let apps = [];
   try { apps = fs.readdirSync(appsDir()); } catch { /* none */ }

@@ -10,9 +10,11 @@
 // The certificate is self-signed, made on first use, and kept in a keychain
 // of Pane's own (PANE_HOME/signing/pane.keychain-db) whose random password
 // is stored next to it (mode 0600). codesign finds identities only in
-// keychains on the user's search list, so Pane's keychain is appended there;
-// every existing entry is kept. The login keychain is never touched, and the
-// user's password is never asked for.
+// keychains on the user's search list, so Pane's keychain joins the list
+// only while codesign runs, and the user's own list is put back exactly.
+// Left on the list, it would be locked after a restart and macOS could ask
+// the user to unlock a keychain whose password they cannot know. The login
+// keychain is never touched, and the user's password is never asked for.
 //
 // Accepted risk: a program already running as the user could read the
 // password file and sign as "Pane Local Signing". Such a program can already
@@ -50,14 +52,6 @@ function realpath(p) {
 function searchList() {
   return security('list-keychains', '-d', 'user').split('\n')
     .map((line) => line.trim().replace(/^"|"$/g, '')).filter(Boolean);
-}
-
-// Appends the keychain to the user's search list unless it is already there.
-function addToSearchList(keychain) {
-  const list = searchList();
-  const want = realpath(keychain);
-  if (list.some((entry) => realpath(entry) === want)) return;
-  security('list-keychains', '-d', 'user', '-s', ...list, keychain);
 }
 
 function findIdentity(keychain) {
@@ -106,39 +100,62 @@ function create(dir, keychain, passwordFile) {
   }
 }
 
-// { identity: SHA-1 of the certificate, keychain } or null when launchers
-// are signed ad hoc (not macOS, or PANE_LAUNCHER_SIGNING=adhoc).
-function ensureLocalIdentity({ env = process.env } = {}) {
-  if (process.platform !== 'darwin' || env.PANE_LAUNCHER_SIGNING === 'adhoc') return null;
+function withSigningLock(fn) {
+  let release = null;
+  for (let waited = 0; !(release = takeLock('signing')); waited += 200) {
+    if (waited >= 30000) throw new LocalIdentityError('Another Pane is still signing a launcher. Try again in a minute.');
+    sleep(200);
+  }
+  try { return fn(); } finally { release(); }
+}
+
+// Makes the identity if needed, and unlocks its keychain. Signing lock held.
+function prepare() {
   const dir = signingDir();
   const keychain = path.join(dir, 'pane.keychain-db');
   const passwordFile = path.join(dir, 'password');
   const readPassword = () => { try { return fs.readFileSync(passwordFile, 'utf8').trim(); } catch { return null; } };
-
-  let release = null;
-  for (let waited = 0; !(release = takeLock('signing')); waited += 200) {
-    if (waited >= 30000) throw new LocalIdentityError('Another Pane is still setting up launcher signing. Try again in a minute.');
-    sleep(200);
-  }
-  try {
-    const password = readPassword();
-    let identity = null;
-    if (password && fs.existsSync(keychain)) {
-      try {
-        security('unlock-keychain', '-p', password, keychain);
-        identity = findIdentity(keychain);
-      } catch { identity = null; }
-    }
-    if (!identity) {
-      create(dir, keychain, passwordFile);
+  const password = readPassword();
+  let identity = null;
+  if (password && fs.existsSync(keychain)) {
+    try {
+      security('unlock-keychain', '-p', password, keychain);
       identity = findIdentity(keychain);
-      if (!identity) throw new LocalIdentityError("Pane's signing certificate was made but macOS does not list it.");
-    }
-    addToSearchList(keychain);
-    return { identity, keychain };
-  } finally {
-    release();
+    } catch { identity = null; }
   }
+  if (!identity) {
+    create(dir, keychain, passwordFile);
+    identity = findIdentity(keychain);
+    if (!identity) throw new LocalIdentityError("Pane's signing certificate was made but macOS does not list it.");
+  }
+  return { identity, keychain };
 }
 
-module.exports = { ensureLocalIdentity, LocalIdentityError };
+const disabled = (env) => process.platform !== 'darwin' || env.PANE_LAUNCHER_SIGNING === 'adhoc';
+
+// { identity: SHA-1 of the certificate, keychain } or null when launchers
+// are signed ad hoc (not macOS, or PANE_LAUNCHER_SIGNING=adhoc).
+function ensureLocalIdentity({ env = process.env } = {}) {
+  if (disabled(env)) return null;
+  return withSigningLock(prepare);
+}
+
+// Runs fn(identity) with Pane's keychain on the search list, then puts the
+// user's list back exactly (and drops Pane's keychain if an older Pane left
+// it there). fn(null) when launchers are signed ad hoc.
+function withLocalIdentity(fn, { env = process.env } = {}) {
+  if (disabled(env)) return fn(null);
+  return withSigningLock(() => {
+    const local = prepare();
+    const own = realpath(local.keychain);
+    const saved = searchList().filter((entry) => realpath(entry) !== own);
+    security('list-keychains', '-d', 'user', '-s', ...saved, local.keychain);
+    try {
+      return fn(local);
+    } finally {
+      security('list-keychains', '-d', 'user', '-s', ...saved);
+    }
+  });
+}
+
+module.exports = { ensureLocalIdentity, withLocalIdentity, LocalIdentityError };

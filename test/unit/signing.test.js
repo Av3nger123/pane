@@ -48,14 +48,21 @@ test('pack-runtime writes a signature that verifies', { skip: process.platform =
   const { packRuntime } = require('../../src/packaging/runtime');
   const out = fs.mkdtempSync(path.join(os.tmpdir(), 'pane-pack-'));
   const saved = process.env.PANE_RELEASE_SIGNING_KEY;
+  const savedKeys = process.env.PANE_RELEASE_KEYS;
   delete process.env.PANE_RELEASE_SIGNING_KEY;
   try {
+    delete process.env.PANE_RELEASE_KEYS;
+    assert.throws(() => packRuntime({ out, signingKey: A.privatePem }), /no release keys.*could never update/);
+    process.env.PANE_RELEASE_KEYS = JSON.stringify([B.publicPem]);
+    assert.throws(() => packRuntime({ out, signingKey: A.privatePem }), /do not include this signing key/);
+    process.env.PANE_RELEASE_KEYS = JSON.stringify([B.publicPem, A.publicPem]);
     const result = packRuntime({ out, signingKey: A.privatePem });
     assert.equal(result.signature, `${result.archive}.sig`);
     assert.equal(verifyRelease(fs.readFileSync(result.archive), fs.readFileSync(result.signature), [A.publicPem]), true);
     assert.throws(() => packRuntime({ out }), /release signing key is missing/);
   } finally {
     if (saved !== undefined) process.env.PANE_RELEASE_SIGNING_KEY = saved;
+    if (savedKeys === undefined) delete process.env.PANE_RELEASE_KEYS; else process.env.PANE_RELEASE_KEYS = savedKeys;
     fs.rmSync(out, { recursive: true, force: true, maxRetries: 5 });
   }
 });
