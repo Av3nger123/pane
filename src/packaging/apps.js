@@ -211,8 +211,16 @@ function openInstalledApp(record, extra = []) {
     child = spawn('open', [record.launcher, '--args', ...args], { env, detached: true, stdio: 'ignore' });
   } else {
     const { electronBinary } = require('../core/paths');
+    // What the reopened app prints goes to logs/<id>-reopen.log, for when it
+    // does not come back.
+    let out = 'ignore';
+    try {
+      fs.mkdirSync(path.join(paneHome(), 'logs'), { recursive: true });
+      out = fs.openSync(path.join(paneHome(), 'logs', `${record.id}-reopen.log`), 'w');
+    } catch { /* no log */ }
     child = spawn(electronBinary(record.runtimeDir), [path.join(record.runtimeDir, 'main.js'), `--app=${path.join(appsDir(), record.id)}`, ...args],
-      { env, detached: true, stdio: 'ignore', windowsHide: false });
+      { env, detached: true, stdio: ['ignore', out, out], windowsHide: false });
+    if (typeof out === 'number') fs.closeSync(out);
   }
   child.on('error', () => {});
   child.unref();

@@ -235,6 +235,11 @@ async function main() {
       const rec = path.join(home, 'apps', id, '.pane-install.json');
       if (fs.existsSync(rec)) console.error(`--- ${id} record ---\n${fs.readFileSync(rec, 'utf8')}`);
     }
+    try {
+      for (const f of fs.readdirSync(path.join(home, 'logs')).filter((n) => n.endsWith('-reopen.log'))) {
+        console.error(`--- ${f} ---\n${fs.readFileSync(path.join(home, 'logs', f), 'utf8').slice(-3000)}`);
+      }
+    } catch { /* none */ }
     for (const { pid, text } of appOutput) console.error(`--- app ${pid} output ---\n${text.slice(-3000)}`);
     try { console.error(`--- locks ---\n${fs.readdirSync(path.join(home, 'locks')).join('\n')}`); } catch { /* none */ }
     process.exitCode = 1;
