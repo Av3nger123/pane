@@ -79,6 +79,21 @@ declare global {
     all(): Promise<Record<string, PaneJson>>;
   }
 
+  interface PaneUpdatesApi {
+    /** Reads the app's update file ("updates" in pane.json). */
+    check(): Promise<{ available: boolean; version: string; notes: string | null }>;
+    /** Downloads and checks the update; it installs when the app restarts. */
+    download(): Promise<{ version: string }>;
+    /** Uses a .paneapp the app got some other way. */
+    installFile(path: string): Promise<{ version: string }>;
+    /** Quits, installs the waiting update, and reopens the app. */
+    restartToUpdate(): void;
+    /** Download progress, 0 to 1. Returns a function that stops listening. */
+    onProgress(listener: (fraction: number) => void): () => void;
+    /** An update is downloaded and waits for a restart. */
+    onReady(listener: (update: { version: string }) => void): () => void;
+  }
+
   interface PaneSecretsApi {
     /** null if there is no secret with this key. */
     get(key: string): Promise<string | null>;
@@ -157,6 +172,8 @@ declare global {
     readonly store: PaneStoreApi;
     /** Text encrypted with the system keychain. */
     readonly secrets: PaneSecretsApi;
+    /** The app's own updates (installed apps signed with pane build --key). */
+    readonly updates: PaneUpdatesApi;
   }
 
   interface Window {

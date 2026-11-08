@@ -265,3 +265,52 @@ test('pane build signs the app with --key, and warns without one', { skip: proce
   assert.ok(unsigned.warnings.some((w) => /unsigned/.test(w)), unsigned.warnings.join('\n'));
   assert.ok(!fs.existsSync(path.join(unpack(unsigned.package), SIGNATURE_FILE)));
 });
+
+test('manifest: updates address', () => {
+  const app = (updates) => tmpApp({ 'pane.json': JSON.stringify({ id: 'a', name: 'A', updates }), 'ui/index.html': '' });
+  assert.equal(loadManifest(app('https://dl.example.com/a/latest.json')).updates, 'https://dl.example.com/a/latest.json');
+  assert.equal(loadManifest(app('http://localhost:8080/latest.json')).updates, 'http://localhost:8080/latest.json');
+  assert.equal(loadManifest(app(undefined)).updates, null);
+  for (const bad of ['http://a', 'ftp://a/b', 'https://', 'latest.json', 42]) {
+    assert.throws(() => loadManifest(app(bad)), /"updates" must be an https address of your update file/, String(bad));
+  }
+});
+
+test('update files: parsed strictly, naming the bad field', () => {
+  const { parseUpdateFile, UpdateFileError } = require('../../src/core/app-update');
+  const good = { version: '0.2.0', url: 'https://dl.example.com/a/a-0.2.0.paneapp', notes: 'Faster.', pane: '>=0.1.0', sha256: 'a'.repeat(64) };
+  assert.deepEqual(parseUpdateFile(JSON.stringify(good)), good);
+  assert.deepEqual(parseUpdateFile(JSON.stringify({ version: '0.2.0', url: 'http://127.0.0.1:9/a.paneapp' })),
+    { version: '0.2.0', url: 'http://127.0.0.1:9/a.paneapp', notes: null, pane: null, sha256: null });
+  for (const [field, value] of [['version', 'x'], ['url', 'http://evil'], ['url', ''], ['sha256', 'zz'], ['pane', 'soon'], ['notes', 'n'.repeat(2001)]]) {
+    assert.throws(() => parseUpdateFile(JSON.stringify({ ...good, [field]: value })),
+      (err) => err instanceof UpdateFileError && err.message.includes(`"${field}"`), `${field}: ${JSON.stringify(value).slice(0, 20)}`);
+  }
+  assert.throws(() => parseUpdateFile('not json'), UpdateFileError);
+  assert.throws(() => parseUpdateFile('[]'), UpdateFileError);
+});
+
+test('pane build writes the update file', { skip: process.platform === 'win32' }, async () => {
+  const crypto = require('crypto');
+  const { buildInstaller } = require('../../src/packaging/build');
+  const files = appFiles({ id: 'upd', name: 'Upd', template: 'vanilla', backend: false });
+  const dir = tmpApp(files);
+  fs.writeFileSync(path.join(dir, 'icon.png'), defaultIconPng({ size: 64 }));
+  const quiet = await buildInstaller(dir);
+  assert.ok(!fs.existsSync(path.join(quiet.outDir, 'latest.json')), 'no update file for an app without updates');
+
+  const result = await buildInstaller(dir, { updateUrl: 'https://dl.example.com/upd/' });
+  const latest = JSON.parse(fs.readFileSync(path.join(result.outDir, 'latest.json'), 'utf8'));
+  assert.equal(latest.version, '0.1.0');
+  assert.equal(latest.url, 'https://dl.example.com/upd/upd-0.1.0.paneapp');
+  assert.equal(latest.sha256, crypto.createHash('sha256').update(fs.readFileSync(result.package)).digest('hex'));
+  assert.ok(result.installers.every((f) => !f.endsWith('latest.json')));
+  assert.equal(result.updateFile, path.join(result.outDir, 'latest.json'));
+
+  // With "updates" in pane.json, the package sits next to the update file.
+  const manifestFile = path.join(dir, 'pane.json');
+  fs.writeFileSync(manifestFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(manifestFile, 'utf8')), updates: 'https://cdn.example.com/apps/upd/latest.json' }));
+  const derived = await buildInstaller(dir);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(derived.outDir, 'latest.json'), 'utf8')).url, 'https://cdn.example.com/apps/upd/upd-0.1.0.paneapp');
+  await assert.rejects(buildInstaller(dir, { updateUrl: 'http://dl.example.com/' }), /--update-url must be an https address/);
+});

@@ -90,6 +90,13 @@ if (info.app.dev) {
   });
 }
 
+function subscribe(event, fn) {
+  if (typeof fn !== 'function') throw new TypeError('Pass a function.');
+  if (!listeners.has(event)) listeners.set(event, new Set());
+  listeners.get(event).add(fn);
+  return () => listeners.get(event).delete(fn);
+}
+
 const win = (name, arg) => ipcRenderer.invoke('pane:window', name, arg).then(unwrap);
 const invoke = (channel, ...args) => ipcRenderer.invoke(channel, ...args).then(unwrap);
 
@@ -191,5 +198,17 @@ contextBridge.exposeInMainWorld('pane', {
     get: (key) => invoke('pane:secrets', 'get', key),
     set: (key, value) => invoke('pane:secrets', 'set', key, value),
     delete: (key) => invoke('pane:secrets', 'delete', key),
+  }),
+
+  // The app's own updates, for installed apps signed with pane build --key.
+  // The app decides when and shows its own UI; an update installs when the
+  // app restarts, and only if it is signed with the app's key.
+  updates: Object.freeze({
+    check: () => invoke('pane:updates', 'check'), // { available, version, notes }
+    download: () => invoke('pane:updates', 'download'), // { version }; progress: onProgress
+    installFile: (filePath) => invoke('pane:updates', 'installFile', filePath), // { version }
+    restartToUpdate: () => { invoke('pane:updates', 'restart').catch((err) => console.error(err)); },
+    onProgress: (fn) => subscribe('pane:update-progress', fn), // fn(fraction)
+    onReady: (fn) => subscribe('pane:update-ready', fn), // fn({ version })
   }),
 });

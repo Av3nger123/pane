@@ -19,6 +19,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - uses: ./.github/actions/electron
       - run: npm test
 
       # Ubuntu 24.04 blocks the user namespaces Chromium's sandbox needs.
@@ -43,6 +44,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - uses: ./.github/actions/electron
       - run: npm run test:templates
       - name: Notes example (a real app on Pane)
         run: npm run test:notes
@@ -61,5 +63,9 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - uses: ./.github/actions/electron
       - run: npm run test:installers
       - run: npm run test:signing
+      - run: npm run test:updates
+      - run: npm run test:keychain
+        if: runner.os == 'macOS'

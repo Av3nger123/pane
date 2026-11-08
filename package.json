@@ -10,7 +10,8 @@
   },
   "pane": {
     "distributionUrl": "https://github.com/Av3nger123/pane/releases/download",
-    "releaseKeys": []
+    "releaseKeys": [],
+    "latestUrl": "https://github.com/Av3nger123/pane/releases/latest/download/pane-latest.json"
   },
   "bin": {
     "pane": "bin/pane.js"
@@ -47,7 +48,9 @@
     "test:templates": "node test/e2e/templates.js",
     "test:notes": "node test/e2e/notes.js",
     "test:installers": "node test/e2e/installers.js",
-    "test:signing": "node test/e2e/signing.js"
+    "test:signing": "node test/e2e/signing.js",
+    "test:updates": "node test/e2e/updates.js",
+    "test:keychain": "node test/e2e/keychain.js"
   },
   "dependencies": {
     "electron": "45.2.3"

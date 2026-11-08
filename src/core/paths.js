@@ -81,7 +81,15 @@ function electronBinary(runtimeRoot = RUNTIME_ROOT) {
   return path.join(pkg, 'dist', ensureElectron(pkg));
 }
 
+// True when two paths name the same folder (on macOS /var is a link to
+// /private/var, so the same Pane can be written two ways).
+function samePath(a, b) {
+  if (!a || !b) return false;
+  const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+  return real(a) === real(b);
+}
+
 module.exports = {
-  RUNTIME_ROOT, RUNTIME_VERSION,
+  RUNTIME_ROOT, RUNTIME_VERSION, samePath,
   paneHome, appsDir, runtimesDir, binDir, dataDir, launchersDir, electronPackageDir, electronDist, electronBinary,
 };

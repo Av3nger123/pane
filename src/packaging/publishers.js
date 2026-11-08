@@ -91,5 +91,5 @@ function forgetPublisher(id) {
 }
 
 module.exports = {
-  PublisherError, checkPublisher, recordPublisher, forgetPublisher, publisherOf,
+  PublisherError, checkPublisher, recordPublisher, forgetPublisher, publisherOf, sameKey,
 };

@@ -18,12 +18,14 @@ Usage:
                                     Run an app, reloading when files change
   pane run [folder] [-- <electron flags>]
                                     Run an app as users will see it
-  pane build [folder] [--out <dir>] [--key <file>] [--sign]
+  pane build [folder] [--out <dir>] [--key <file>] [--sign] [--update-url <address>]
                                     Build the app and its installer in <folder>/release.
                                     Installers download Pane when a computer lacks it.
                                     --key signs the app (default: PANE_SIGNING_KEY)
                                     --sign signs the installers with your certificates
                                     (PANE_SIGN_* settings, see README)
+                                    --update-url is where you upload the .paneapp; it goes
+                                    into latest.json (default: next to pane.json's "updates")
   pane keygen <file>                Create a key for signing your apps
   pane open <folder> <link|file> [--dev]
                                     Hand a link (notes://...) or file to the app, as the
@@ -33,6 +35,9 @@ Usage:
   pane uninstall <app-id> [--purge] Remove an app (--purge also deletes its data)
   pane list                         Show installed apps
   pane setup                        Install this Pane runtime on this computer
+  pane self-update [--force]        Install a newer Pane if there is one (apps do this daily)
+  pane app-update check|download|install-file|apply <app-id> [file]
+                                    An app's own update (apps run this through pane.updates)
   pane pack-runtime [--out <dir>] [--key <file>]
                                     Make this runtime's signed files for the distribution server
                                     (key: Pane's release key; default PANE_RELEASE_SIGNING_KEY)
@@ -40,7 +45,7 @@ Usage:
   pane version
 `;
 
-const VALUE_FLAGS = new Set(['name', 'out', 'template', 'key', 'expect']);
+const VALUE_FLAGS = new Set(['name', 'out', 'template', 'key', 'expect', 'after', 'update-url']);
 
 function parseArgs(argv) {
   const positional = [];
@@ -78,6 +83,9 @@ function main() {
     case 'uninstall': return command('uninstall').uninstall(positional[0], flags);
     case 'list': return command('list').list();
     case 'setup': return command('setup').setup(flags);
+    case 'self-update': return command('self-update').selfUpdateCommand(flags);
+    case 'launcher-refresh': return command('launcher-refresh').launcherRefresh(positional[0], flags, extra);
+    case 'app-update': return command('app-update').appUpdate(positional, flags, extra);
     case 'pack-runtime': return command('pack-runtime').packRuntimeCommand(flags);
     case 'keygen': return command('keygen').keygen(positional[0], flags);
     case 'version': case '--version': case '-v':

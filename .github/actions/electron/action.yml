@@ -1,0 +1,21 @@
+name: Electron
+description: Restores Electron's download cache and fetches Electron, retrying when GitHub's downloads time out.
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@v6
+      with:
+        path: |
+          ~/Library/Caches/electron
+          ~/.cache/electron
+          ~/AppData/Local/electron/Cache
+        key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+    - name: Fetch Electron
+      shell: bash
+      run: |
+        for attempt in 1 2 3 4 5; do
+          node -e "require('./src/core/paths').electronBinary()" && exit 0
+          echo "Electron download failed (attempt $attempt); retrying in 30 s."
+          sleep 30
+        done
+        exit 1

@@ -34,7 +34,7 @@ async function main() {
   let server = null;
   const badServers = [];
   let installedId = null;
-  const userEnv = { ...baseEnv, PANE_HOME: home, PANE_LAUNCHERS_DIR: launchers, PANE_INSTALLER_GUI: '0', PANE_INSTALLER_OPEN: '0' };
+  const userEnv = { ...baseEnv, PANE_HOME: home, PANE_LAUNCHERS_DIR: launchers, PANE_LAUNCHER_SIGNING: 'adhoc', PANE_INSTALLER_GUI: '0', PANE_INSTALLER_OPEN: '0' };
   try {
     if (WIN) {
       execFileSync(process.execPath, [path.join(RUNTIME_ROOT, 'installer', 'windows', 'build.js')], { stdio: 'pipe' });

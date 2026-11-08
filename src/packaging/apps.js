@@ -5,14 +5,18 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { tarBinary } = require('../core/run');
 const { loadManifest, ID_RE } = require('../core/manifest');
 const { satisfies } = require('../core/version');
 const { createLauncher, removeLauncher, fileName } = require('./launchers');
 const { verifyApp, AppSignatureError } = require('../core/app-signature');
+const { runningApps } = require('../core/running');
+const { REOPENED_FLAG } = require('../core/update-state');
+const { runtimeVersionOf } = require('./runtime');
 const {
   checkPublisher, recordPublisher, forgetPublisher, publisherOf,
 } = require('./publishers');
-const { RUNTIME_ROOT, RUNTIME_VERSION, paneHome, appsDir, launchersDir } = require('../core/paths');
+const { RUNTIME_ROOT, RUNTIME_VERSION, paneHome, appsDir, launchersDir, samePath } = require('../core/paths');
 
 const RECORD = '.pane-install.json';
 // Never copied when installing or packaging an app. `release` is where
@@ -28,13 +32,17 @@ const EXIT_NEEDS_NEWER_PANE = 3;
 // is where the .paneapp sits relative to the script.
 // Installs an app folder or a .paneapp file. Launchers point at the runtime
 // running this command.
-function installApp(source) {
+//
+// requireSigner (app updates): the app must be signed with the key already
+// recorded for its id, so an update can never be unsigned, switch an
+// unsigned app to signed, or change publisher. expectId: the id it must have.
+function installApp(source, { requireSigner = false, expectId } = {}) {
   const src = path.resolve(source);
   let unpacked = null;
   let appSource = src;
   if (/\.paneapp$/i.test(src)) {
     unpacked = fs.mkdtempSync(path.join(os.tmpdir(), 'pane-install-'));
-    execFileSync('tar', ['-xzf', src, '-C', unpacked], { stdio: 'pipe' });
+    execFileSync(tarBinary(), ['-xzf', src, '-C', unpacked], { stdio: 'pipe' });
     appSource = unpacked;
   }
   try {
@@ -53,6 +61,15 @@ function installApp(source) {
       if (err instanceof AppSignatureError) err.message = `${incoming.name} was not installed. ${err.message}`;
       throw err;
     }
+    if (expectId !== undefined && incoming.id !== expectId) {
+      throw new Error(`This update is for ${incoming.id}, not ${expectId}. Nothing was installed.`);
+    }
+    if (requireSigner) {
+      if (!signer) throw new Error(`${incoming.name}'s update is unsigned. Nothing was installed.`);
+      if (!publisherOf(incoming.id)) {
+        throw new Error(`${incoming.name} was installed unsigned, so it cannot switch to a signed copy through an update. Nothing was installed.`);
+      }
+    }
     checkPublisher(incoming.id, signer);
     const dest = path.join(appsDir(), incoming.id);
     const tmp = `${dest}.partial`;
@@ -64,20 +81,41 @@ function installApp(source) {
       filter: (p) => !SKIP_IN_APP.has(path.basename(p)),
     });
     const previous = readRecord(dest);
-    fs.rmSync(dest, { recursive: true, force: true });
-    fs.renameSync(tmp, dest);
+    // Swap folders by renaming, never by deleting first: on Windows a folder
+    // in use cannot be renamed, so the install fails cleanly instead of
+    // leaving a half-deleted app.
+    const old = `${dest}.old`;
+    fs.rmSync(old, { recursive: true, force: true });
+    if (fs.existsSync(dest)) {
+      try {
+        fs.renameSync(dest, old);
+      } catch (err) {
+        fs.rmSync(tmp, { recursive: true, force: true });
+        throw new Error(`${incoming.name} is in use (${err.code || err.message}). Close it and try again. Nothing was installed.`);
+      }
+    }
+    const restore = () => {
+      fs.rmSync(dest, { recursive: true, force: true });
+      if (fs.existsSync(old)) fs.renameSync(old, dest);
+    };
+    try {
+      fs.renameSync(tmp, dest);
+    } catch (err) {
+      restore();
+      throw err;
+    }
 
     const manifest = loadManifest(dest);
-    if (previous && previous.launcher && previous.launcher !== launcherPathFor(manifest)) removeLauncher(previous.launcher);
     let launcher;
     try {
       launcher = createLauncher({
         manifest, appDir: dest, runtimeRoot: RUNTIME_ROOT, home: paneHome(), outDir: launchersDir(),
       });
     } catch (err) {
-      fs.rmSync(dest, { recursive: true, force: true }); // no half-installed apps
+      restore(); // no half-installed apps
       throw new Error(`Could not create the launcher for ${manifest.name}: ${err.message}`);
     }
+    if (previous && previous.launcher && previous.launcher !== launcher) removeLauncher(previous.launcher);
     recordPublisher(manifest.id, signer);
     const record = {
       id: manifest.id, name: manifest.name, version: manifest.version,
@@ -86,7 +124,8 @@ function installApp(source) {
       runtime: RUNTIME_VERSION, runtimeDir: RUNTIME_ROOT, launcher,
       installedAt: new Date().toISOString(),
     };
-    fs.writeFileSync(path.join(dest, RECORD), `${JSON.stringify(record, null, 2)}\n`);
+    writeRecord(dest, record);
+    try { fs.rmSync(old, { recursive: true, force: true }); } catch { /* removed next install */ }
     return record;
   } finally {
     if (unpacked) fs.rmSync(unpacked, { recursive: true, force: true });
@@ -140,6 +179,86 @@ function readRecord(dir) {
   try { return JSON.parse(fs.readFileSync(path.join(dir, RECORD), 'utf8')); } catch { return null; }
 }
 
+// Moves an installed app's launcher onto another Pane runtime.
+function refreshLauncher(id, runtimeDir) {
+  if (typeof id !== 'string' || !ID_RE.test(id)) throw new Error(`"${id}" is not an app id.`);
+  const dest = path.join(appsDir(), id);
+  const record = readRecord(dest);
+  if (!record) throw new Error(`No installed app with the id "${id}".`);
+  const version = runtimeVersionOf(runtimeDir);
+  if (!version || !fs.existsSync(path.join(runtimeDir, 'main.js'))) throw new Error(`${runtimeDir} is not a Pane runtime.`);
+  const manifest = loadManifest(dest);
+  if (!satisfies(version, manifest.pane)) throw new Error(`${manifest.name} needs Pane ${manifest.pane}, not ${version}.`);
+  const launcher = createLauncher({ manifest, appDir: dest, runtimeRoot: runtimeDir, home: paneHome(), outDir: launchersDir() });
+  const next = { ...record, runtime: version, runtimeDir, launcher };
+  delete next.pendingRuntime;
+  writeRecord(dest, next);
+  return next;
+}
+
+// After a Pane update: idle apps move now, running ones when they next open,
+// and apps whose pane.json excludes the new version stay where they are.
+function moveAppsOnto(runtimeDir) {
+  const version = runtimeVersionOf(runtimeDir);
+  const running = new Set(runningApps().map((r) => r.id));
+  return listApps().map((record) => {
+    const dest = path.join(appsDir(), record.id);
+    let manifest;
+    try { manifest = loadManifest(dest); } catch { return { id: record.id, result: 'kept' }; }
+    if (samePath(record.runtimeDir, runtimeDir) || !satisfies(version, manifest.pane)) return { id: record.id, result: 'kept' };
+    if (running.has(record.id)) {
+      writeRecord(dest, { ...record, pendingRuntime: runtimeDir });
+      return { id: record.id, result: 'pending' };
+    }
+    try {
+      refreshLauncher(record.id, runtimeDir);
+      return { id: record.id, result: 'moved' };
+    } catch (err) {
+      return { id: record.id, result: 'kept', error: err.message };
+    }
+  });
+}
+
+// The app's own arguments, plus the mark that stops it handing over again.
+const reopenArgs = (args = []) => [...args.filter((a) => a !== REOPENED_FLAG), REOPENED_FLAG];
+
+// Reopens an installed app as its launcher does, with its arguments (a link,
+// a file, Chromium flags) and the reopened mark.
+function openInstalledApp(record, extra = []) {
+  const args = reopenArgs(extra);
+  const { spawn } = require('child_process');
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  let child;
+  if (process.platform === 'darwin') {
+    child = spawn('open', [record.launcher, '--args', ...args], { env, detached: true, stdio: 'ignore' });
+  } else {
+    const { electronBinary } = require('../core/paths');
+    // What the reopened app prints goes to logs/<id>-reopen.log, for when it
+    // does not come back.
+    let out = 'ignore';
+    try {
+      fs.mkdirSync(path.join(paneHome(), 'logs'), { recursive: true });
+      out = fs.openSync(path.join(paneHome(), 'logs', `${record.id}-reopen.log`), 'w');
+    } catch { /* no log */ }
+    child = spawn(electronBinary(record.runtimeDir), [path.join(record.runtimeDir, 'main.js'), `--app=${path.join(appsDir(), record.id)}`, ...args],
+      { env, cwd: path.join(appsDir(), record.id), detached: true, stdio: ['ignore', out, out], windowsHide: false });
+    if (typeof out === 'number') fs.closeSync(out);
+  }
+  child.on('error', () => {});
+  child.unref();
+}
+
+// Written to a temporary file, then renamed: a crash never leaves a record
+// that cannot be read.
+function writeRecord(dir, record) {
+  const file = path.join(dir, RECORD);
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, `${JSON.stringify(record, null, 2)}\n`);
+  fs.renameSync(tmp, file);
+}
+
 module.exports = {
+  moveAppsOnto, refreshLauncher, readRecord, writeRecord, openInstalledApp, reopenArgs, REOPENED_FLAG,
   installApp, uninstallApp, listApps, launcherPathFor, SKIP_IN_APP, EXIT_NEEDS_NEWER_PANE,
 };

@@ -88,4 +88,19 @@ async function waitForUrl(url, { child, timeout = 60000 } = {}) {
   }
 }
 
-module.exports = { projectEnv, runCommand, startCommand, stopCommand, freePort, waitForUrl };
+// tar: on Windows the one in System32 (bsdtar), never another tar on PATH
+// (Git's GNU tar reads C:\\ as a remote host).
+function tarBinary() {
+  return process.platform === 'win32' ? require('path').join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
+}
+
+// Arguments for cmd.exe to run a .cmd file (Windows runs .cmd files only
+// through cmd). With /s, cmd strips the first and last quote of the line,
+// so the whole line gets one extra pair, as Node's own shell option does.
+// Arguments are quoted, so spaces are fine; they must not contain quotes.
+function cmdArgs(file, args) {
+  const line = [file, ...args].map((a) => `"${String(a)}"`).join(' ');
+  return ['/d', '/s', '/c', `"${line}"`];
+}
+
+module.exports = { cmdArgs, tarBinary, projectEnv, runCommand, startCommand, stopCommand, freePort, waitForUrl };

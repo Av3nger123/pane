@@ -13,6 +13,7 @@ const { fileName } = require('./launchers');
 const { distributionUrl } = require('./runtime');
 const { releaseKeys } = require('../core/release-signature');
 const { signApp, fingerprint } = require('../core/app-signature');
+const { isUpdateAddress } = require('../core/app-update');
 const { SKIP_IN_APP } = require('./apps');
 const { buildDmg } = require('./installers/dmg');
 const { writeSetupExe } = require('./installers/setup-exe');
@@ -23,6 +24,7 @@ const { writeInstallScript } = require('./installers/install-sh');
 //   <Name> <version>.dmg        macOS: "Install <Name>.app" (built on a Mac)
 //   <Name> Setup <version>.exe  Windows: PaneSetup.exe with the app attached
 //   install.sh                  macOS / Linux terminal install
+//   latest.json                 the update file, for apps that update themselves
 // Each gets Pane first when needed, then installs the app.
 //
 // key: a file with the developer's Ed25519 key (pane keygen); defaults to
@@ -30,7 +32,13 @@ const { writeInstallScript } = require('./installers/install-sh');
 //
 // sign: also sign the installers with the developer's certificates
 // (signing/windows.js, signing/macos.js).
-async function buildInstaller(appDir, { out, key, sign = false } = {}) {
+//
+// updateUrl: where the .paneapp will be uploaded, for latest.json. Defaults to
+// the folder of pane.json's "updates" address. Without either, no latest.json.
+async function buildInstaller(appDir, { out, key, sign = false, updateUrl } = {}) {
+  if (updateUrl !== undefined && !isUpdateAddress(updateUrl)) {
+    throw new Error(`--update-url must be an https address of the folder you upload to: ${updateUrl}`);
+  }
   const dir = path.resolve(appDir);
   const draft = loadManifest(dir, { requireUi: false });
   if (draft.build) await runCommand(draft.build.command, { cwd: dir, label: 'The build command' });
@@ -113,7 +121,9 @@ async function buildInstaller(appDir, { out, key, sign = false } = {}) {
 
     // Terminal installs on macOS and Linux.
     installers.push(writeInstallScript({ outDir, opts }));
-    return { outDir, package: pkg, installers, paneVersion: RUNTIME_VERSION, distributionUrl: dist, publisher, warnings };
+
+    const updateFile = writeUpdateFile({ manifest, pkg, pkgName, outDir, updateUrl, warnings });
+    return { outDir, package: pkg, installers, updateFile, paneVersion: RUNTIME_VERSION, distributionUrl: dist, publisher, warnings };
   } finally {
     fs.rmSync(stage, { recursive: true, force: true });
   }
@@ -145,6 +155,26 @@ function findNativeModules(nodeModules) {
   };
   walk(nodeModules, 0);
   return [...found];
+}
+
+// latest.json, uploaded next to the .paneapp: tells installed copies that
+// this version exists and where to get it. Null when the app has no updates.
+function writeUpdateFile({ manifest, pkg, pkgName, outDir, updateUrl, warnings }) {
+  if (updateUrl === undefined && !manifest.updates) return null;
+  const base = updateUrl !== undefined ? updateUrl.replace(/\/*$/, '/') : manifest.updates;
+  const latest = {
+    version: manifest.version,
+    url: new URL(encodeURIComponent(pkgName), base).href,
+    pane: manifest.pane || undefined,
+    sha256: require('crypto').createHash('sha256').update(fs.readFileSync(pkg)).digest('hex'),
+  };
+  if (!manifest.updates) {
+    warnings.push('pane.json has no "updates" address, so installed copies of this version will not look for updates. '
+      + 'Add "updates": "<address of latest.json>" before building the version you ship.');
+  }
+  const file = path.join(outDir, 'latest.json');
+  fs.writeFileSync(file, `${JSON.stringify(latest, null, 2)}\n`);
+  return file;
 }
 
 module.exports = { buildInstaller };

@@ -8,9 +8,9 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { parse, compare } = require('../core/version');
-const { signRelease } = require('../core/release-signature');
+const { signRelease, releaseKeys } = require('../core/release-signature');
 const {
-  RUNTIME_ROOT, RUNTIME_VERSION, runtimesDir, binDir, electronBinary, electronPackageDir,
+  RUNTIME_ROOT, RUNTIME_VERSION, paneHome, runtimesDir, binDir, electronBinary, electronPackageDir,
 } = require('../core/paths');
 
 // What a runtime folder needs, besides Electron. Everything else stays behind.
@@ -45,13 +45,22 @@ function runtimeVersionOf(dir) {
 const commandPath = () => path.join(binDir(), process.platform === 'win32' ? 'pane.cmd' : 'pane');
 
 // A self-contained runtime folder: Pane's files plus node_modules/electron.
-function stageRuntime(from, dest) {
+// pkg: changes to its package.json (packing bakes in the release keys, and
+// tests pack other versions).
+function stageRuntime(from, dest, pkg = null) {
   fs.rmSync(dest, { recursive: true, force: true });
   fs.mkdirSync(dest, { recursive: true });
   for (const rel of RUNTIME_FILES) {
     const src = path.join(from, rel);
     if (!fs.existsSync(src)) throw new Error(`The runtime is incomplete: ${rel} is missing.`);
     copyTree(src, path.join(dest, rel));
+  }
+  if (pkg) {
+    const file = path.join(dest, 'package.json');
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (pkg.version) data.version = pkg.version;
+    if (pkg.releaseKeys) data.pane = { ...data.pane, releaseKeys: pkg.releaseKeys };
+    fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
   }
   fs.mkdirSync(path.join(dest, 'node_modules'), { recursive: true });
   electronBinary(from); // downloads Electron if it is not there yet
@@ -104,14 +113,26 @@ function installedRuntime() {
 
 const PACKAGE = require('../../package.json');
 
-function distributionUrl() {
-  const url = (process.env.PANE_DIST_URL || (PACKAGE.pane && PACKAGE.pane.distributionUrl) || '').trim().replace(/\/+$/, '');
-  if (!url) return null;
-  // https only, except a local server for testing.
+// https only, except a local server for testing.
+function checkAddress(url, what) {
   if (!/^https:\/\//i.test(url) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(url)) {
-    throw new Error(`Pane's distribution address must use https: ${url}`);
+    throw new Error(`${what} must use https: ${url}`);
   }
   return url;
+}
+
+function distributionUrl() {
+  const url = (process.env.PANE_DIST_URL || (PACKAGE.pane && PACKAGE.pane.distributionUrl) || '').trim().replace(/\/+$/, '');
+  return url ? checkAddress(url, "Pane's distribution address") : null;
+}
+
+// Where the newest Pane version is announced: a small JSON file,
+// {"version":"0.2.0"}, that the release workflow publishes. A changed copy can
+// at worst delay an update; every download is still checked for Pane's
+// signature and version.
+function latestUrl({ env = process.env } = {}) {
+  const url = (env.PANE_LATEST_URL || (PACKAGE.pane && PACKAGE.pane.latestUrl) || '').trim();
+  return url ? checkAddress(url, "Pane's latest-version address") : null;
 }
 
 const runtimeArchiveName = (version, platform = process.platform, arch = process.arch) =>
@@ -120,15 +141,27 @@ const runtimeArchiveName = (version, platform = process.platform, arch = process
 // Writes this runtime, for this OS and CPU, as files to upload to the
 // distribution server: <out>/v<version>/<archive>, <archive>.sig and
 // <archive>.sha256. signingKey: Pane's private release key (PEM); defaults to
-// PANE_RELEASE_SIGNING_KEY.
-function packRuntime({ out, signingKey = process.env.PANE_RELEASE_SIGNING_KEY }) {
+// PANE_RELEASE_SIGNING_KEY. The packed runtime trusts releaseKeys() (Pane's
+// package.json, or PANE_RELEASE_KEYS while packing) for its own updates.
+// version: pack under another version number (for tests). Also writes
+// <out>/pane-latest.json.
+function packRuntime({ out, signingKey = process.env.PANE_RELEASE_SIGNING_KEY, version = RUNTIME_VERSION }) {
   if (!signingKey) throw new Error("Pane's release signing key is missing. Set PANE_RELEASE_SIGNING_KEY or pass --key <file>.");
-  const dir = path.join(path.resolve(out), `v${RUNTIME_VERSION}`);
+  // Installed Panes trust only the keys baked in here, forever: a release
+  // whose keys do not include its own signing key could never update.
+  const keys = releaseKeys();
+  const own = crypto.createPublicKey(signingKey).export({ type: 'spki', format: 'der' });
+  if (!keys.some((pem) => crypto.createPublicKey(pem).export({ type: 'spki', format: 'der' }).equals(own))) {
+    throw new Error(keys.length
+      ? "The release keys (PANE_RELEASE_KEYS or package.json pane.releaseKeys) do not include this signing key's public key. Installed copies could never update. Nothing was packed."
+      : 'There are no release keys (PANE_RELEASE_KEYS or package.json pane.releaseKeys). Installed copies could never update. Nothing was packed.');
+  }
+  const dir = path.join(path.resolve(out), `v${version}`);
   fs.mkdirSync(dir, { recursive: true });
-  const archive = path.join(dir, runtimeArchiveName(RUNTIME_VERSION));
+  const archive = path.join(dir, runtimeArchiveName(version));
   const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'pane-runtime-'));
   try {
-    stageRuntime(RUNTIME_ROOT, path.join(stage, 'runtime'));
+    stageRuntime(RUNTIME_ROOT, path.join(stage, 'runtime'), { version, releaseKeys: keys });
     execFileSync('tar', ['-czf', archive, '-C', path.join(stage, 'runtime'), '.'], { stdio: 'pipe' });
   } finally {
     fs.rmSync(stage, { recursive: true, force: true });
@@ -137,7 +170,9 @@ function packRuntime({ out, signingKey = process.env.PANE_RELEASE_SIGNING_KEY })
   fs.writeFileSync(`${archive}.sha256`, `${sha256}  ${path.basename(archive)}\n`);
   const signature = `${archive}.sig`;
   fs.writeFileSync(signature, signRelease(fs.readFileSync(archive), signingKey));
-  return { dir, archive, sha256, signature };
+  const latest = path.join(path.resolve(out), 'pane-latest.json');
+  fs.writeFileSync(latest, `${JSON.stringify({ version })}\n`);
+  return { dir, archive, sha256, signature, latest };
 }
 
 function copyTree(from, to) {
@@ -147,6 +182,70 @@ function copyTree(from, to) {
   fs.cpSync(from, to, { recursive: true, verbatimSymlinks: true });
 }
 
+// Removes Pane versions nothing uses any more: not the current one, not the
+// one running this command, not one an installed app is on or moving to, and
+// not one a running app is using. Also old leftovers of interrupted installs.
+// Returns the names it removed.
+function cleanupRuntimes() {
+  const root = runtimesDir();
+  let names = [];
+  try { names = fs.readdirSync(root); } catch { return []; }
+  // Real paths: the same folder can be named two ways (on macOS /var is a
+  // link to /private/var), and a Pane in use must never look unused.
+  const same = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+  const keep = new Set([same(RUNTIME_ROOT)]);
+  const current = installedRuntime();
+  if (current) keep.add(same(current));
+  // The previous Pane stays too, so going back by hand stays possible if a
+  // new Pane turns out bad.
+  const currentVersion = current ? parse(runtimeVersionOf(current) || '') : null;
+  if (currentVersion) {
+    const older = names.map((name) => ({ dir: path.join(root, name), v: parse(name) }))
+      .filter((r) => r.v && compare(r.v, currentVersion) < 0 && fs.existsSync(path.join(r.dir, 'main.js')))
+      .sort((a, b) => compare(b.v, a.v));
+    if (older.length) keep.add(same(older[0].dir));
+  }
+  const { appsDir } = require('../core/paths');
+  let apps = [];
+  try { apps = fs.readdirSync(appsDir()); } catch { /* none */ }
+  for (const id of apps) {
+    try {
+      const record = JSON.parse(fs.readFileSync(path.join(appsDir(), id, '.pane-install.json'), 'utf8'));
+      for (const dir of [record.runtimeDir, record.pendingRuntime]) if (dir) keep.add(same(dir));
+    } catch { /* not an installed app */ }
+  }
+  for (const entry of require('../core/running').runningApps()) if (entry.runtimeDir) keep.add(same(entry.runtimeDir));
+
+  // Downloads left behind (Windows may refuse to delete them at once).
+  const downloads = path.join(paneHome(), 'downloads');
+  let leftovers = [];
+  try { leftovers = fs.readdirSync(downloads); } catch { /* none */ }
+  for (const name of leftovers) {
+    const dir = path.join(downloads, name);
+    try {
+      if (Date.now() - fs.statSync(dir).mtimeMs > 3600e3) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+    } catch { /* still in use: next time */ }
+  }
+
+  const removed = [];
+  for (const name of names) {
+    const dir = path.join(root, name);
+    let stat;
+    try { stat = fs.statSync(dir); } catch { continue; }
+    if (!stat.isDirectory()) continue;
+    if (name.endsWith('.partial')) {
+      if (Date.now() - stat.mtimeMs < 3600e3) continue;
+    } else if (!fs.existsSync(path.join(dir, 'main.js')) || keep.has(same(dir))) {
+      continue;
+    }
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+    removed.push(name);
+  }
+  return removed;
+}
+
 module.exports = {
-  setupRuntime, stageRuntime, installedRuntime, packRuntime, distributionUrl, runtimeArchiveName, copyTree,
+  cleanupRuntimes,
+  setupRuntime, stageRuntime, installedRuntime, packRuntime, distributionUrl, latestUrl, runtimeArchiveName, copyTree,
+  runtimeVersionOf,
 };
